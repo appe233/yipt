@@ -1,0 +1,13 @@
+# Build output
+/yipt
+
+# Go toolchain
+*.test
+*.out
+/vendor/
+
+# OS
+.DS_Store
+
+# Claude Code
+.claude/
