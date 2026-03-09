@@ -1,0 +1,295 @@
+# Comprehensive example combining all features of the YAML-to-iptables format.
+# Every resource type, match syntax, and rule field found across all example files
+# is represented here at least once.
+
+resources:
+
+  # --- ipset: IP/subnet address sets ---
+  trusted_networks:
+    type: ipset
+    elements:
+      - 192.168.1.0/24
+      - 10.0.0.0/24
+
+  bgp_peers:
+    type: ipset
+    elements:
+      - 172.20.0.0/14  # DN42
+      - fd00::/8       # DN42 v6
+      - 10.127.0.0/16  # NeoNetwork
+      - fd10:127::/32  # NeoNetwork v6
+      - 10.0.0.0/8     # ICVPN
+      - 10.4.0.0/16    # ChaosVPN
+      - 10.32.0.0/16
+      - 10.100.0.0/14
+      - 10.104.0.0/14
+      - 172.31.0.0/16
+
+  # --- portset: port number sets (compiled to multiport rules) ---
+  wg_ports:
+    type: portset
+    elements:
+      - 34512  # peer-a
+      - 21816  # peer-b
+      - 22547  # peer-c
+      - 23914  # peer-d
+
+  smb_tcp_ports:
+    type: portset
+    elements:
+      - 135
+      - 139
+      - 445
+
+  smb_udp_ports:
+    type: portset
+    elements:
+      - 135
+      - 445
+
+  # --- icmp_typeset: IPv4 ICMP type groups ---
+  basic_icmp_types:
+    type: icmp_typeset
+    elements:
+      - 0   # Echo Reply
+      - 3   # Destination Unreachable
+      - 11  # Time Exceeded
+      - 12  # Parameter Problem
+
+  ping_icmp_types:
+    type: icmp_typeset
+    elements:
+      - 8   # Echo Request (ping)
+
+  # --- icmpv6_typeset: ICMPv6 type groups ---
+  basic_icmpv6_types:
+    type: icmpv6_typeset
+    elements:
+      - 1   # Destination Unreachable
+      - 2   # Packet Too Big
+      - 3   # Time Exceeded
+      - 4   # Parameter Problem
+      - 129 # Echo Reply
+
+  neighbor_discovery_types:
+    type: icmpv6_typeset
+    elements:
+      - 133 # Router Solicitation
+      - 134 # Router Advertisement
+      - 135 # Neighbor Solicitation
+      - 136 # Neighbor Advertisement
+      - 137 # Redirect Message
+      - 141 # Inverse Neighbor Discovery Solicitation
+      - 142 # Inverse Neighbor Discovery Advertisement
+      - 148 # Certificate Path Solicitation
+      - 149 # Certificate Path Advertisement
+
+  linklocal_icmpv6_types:
+    type: icmpv6_typeset
+    elements:
+      - 130 # Multicast Listener Query
+      - 131 # Multicast Listener Report
+      - 132 # Multicast Listener Done
+      - 143 # Version 2 Multicast Listener Report
+      - 151 # Multicast Router Advertisement
+      - 152 # Multicast Router Solicitation
+      - 153 # Multicast Router Termination
+
+  ping_icmpv6_types:
+    type: icmpv6_typeset
+    elements:
+      - 128 # Echo Request
+
+
+chains:
+
+  # =========================================================================
+  # INPUT — the primary ingress chain; policy drop
+  # =========================================================================
+  INPUT:
+    policy: drop
+    filter:
+      # --- loopback ---
+      - {i: lo, j: accept}
+
+      # --- conntrack ---
+      - {match: {conntrack: {ctstate: [ESTABLISHED, RELATED]}}, j: accept, comment: "Allow established/related connections"}
+      - {match: {conntrack: {ctstate: [INVALID]}}, j: drop}
+
+      # --- anti-spoofing: block remote loopback addresses ---
+      - {s: 127.0.0.0/8, i!: "lo", j: drop}
+      - {s: "::1/128",   i!: "lo", j: drop}
+
+      # --- addrtype match ---
+      - {match: {addrtype: {dst-type: BROADCAST}}, j: drop}
+      - {match: {addrtype: {dst-type: MULTICAST}}, j: drop}
+      - {match: {addrtype: {dst-type: ANYCAST}},   j: drop}
+      - {d: 224.0.0.0/4, j: drop}
+
+      # --- SSH with SYN flag, conntrack ctstate, and jump to brute-force chain ---
+      - {p: tcp, dp: 22, syn: true, match: {conntrack: {ctstate: [NEW]}}, j: SSHBRUTE, comment: "SSH anti-brute-force"}
+
+      # --- TCP services ---
+      - {p: tcp, dp: 8000, j: accept}
+      - {p: tcp, dp: [80, 443], syn: true, match: {conntrack: {ctstate: [NEW]}}, j: accept}
+
+      # --- REJECT with explicit rejection type (instead of drop) ---
+      - {p: tcp, dp: 113, syn: true, match: {conntrack: {ctstate: [NEW]}}, reject-with: tcp-reset, j: reject}
+
+      # --- IPv4 ICMP: using icmp_typeset resource reference ---
+      - {p: icmp, icmp-type: $basic_icmp_types, j: accept}
+
+      # --- IPv4 ICMP: using named type string ---
+      - {p: icmp, icmp-type: 'echo-reply',             match: {conntrack: {ctstate: [NEW]}}, j: accept}
+      - {p: icmp, icmp-type: 'destination-unreachable', match: {conntrack: {ctstate: [NEW]}}, j: accept}
+      - {p: icmp, icmp-type: 'time-exceeded',          match: {conntrack: {ctstate: [NEW]}}, j: accept}
+
+      # --- IPv4 ICMP ping: numeric type, jump to flood-guard chain ---
+      - {p: icmp, icmp-type: $ping_icmp_types, j: ICMPFLOOD}
+
+      # --- ICMPv6: typeset resource reference, any source ---
+      - {p: ipv6-icmp, icmpv6-type: $basic_icmpv6_types,       j: accept}
+      - {p: ipv6-icmp, icmpv6-type: $neighbor_discovery_types,  j: accept}
+
+      # --- ICMPv6: typeset resource reference, link-local source restricted ---
+      - {p: ipv6-icmp, s: "fe80::/10", icmpv6-type: $linklocal_icmpv6_types, j: accept}
+
+      # --- ICMPv6 ping: numeric type, jump to flood-guard ---
+      - {p: ipv6-icmp, icmpv6-type: $ping_icmpv6_types, j: ICMPFLOOD}
+      # Inline numeric type (no resource reference):
+      - {p: ipv6-icmp, icmpv6-type: 128, j: ICMPFLOOD}
+
+      # --- portset resource reference ---
+      - {p: udp, dp: $wg_ports,    j: accept, comment: "WireGuard peers"}
+
+      # --- BGP from ipset resource reference ---
+      - {s: $bgp_peers, p: tcp, dp: 179, j: accept, comment: "BGP sessions"}
+
+      # --- SSH from trusted_networks (ipset) only ---
+      - {s: $trusted_networks, p: tcp, dp: 22, syn: true, match: {conntrack: {ctstate: [NEW]}}, j: accept}
+
+      # --- Drop SMB via portset reference ---
+      - {p: udp, dp: $smb_udp_ports,    j: drop}
+      - {p: udp, dp: [137:139],         j: drop}   # port range syntax
+      - {p: udp, sp: 137, dp: [1024:65535], j: drop}
+      - {p: tcp, dp: $smb_tcp_ports,    j: drop}
+      - {p: udp, dp: 1900,              j: drop}
+      - {p: udp, sp: 53,                j: drop}
+      - {p: tcp, sp: [5554, 5555, 5556:5560], dp: 5555, j: drop} # eg. multi-port syntax with specific destination port match
+
+      # --- limit match (rate limiting / log DOS) ---
+      - {match: {limit: {limit: 1/second, limit-burst: 100}}, log-prefix: "iptables[DOS]: ", j: log}
+
+  # =========================================================================
+  # FORWARD — forwarding chain; policy drop
+  # =========================================================================
+  FORWARD:
+    policy: drop
+    filter: []
+
+  # =========================================================================
+  # OUTPUT — outbound; policy accept
+  # =========================================================================
+  OUTPUT:
+    policy: accept
+    filter:
+      - {j: XRAY_MASK}
+
+  # =========================================================================
+  # PREROUTING (mangle table) — tproxy / socket dispatch
+  # =========================================================================
+  PREROUTING:
+    mangle:
+      - {p: tcp, match: {socket: {}}, j: DIVERT}
+      - {j: XRAY}
+
+  # =========================================================================
+  # DOCKER-USER — Docker integration; no policy (user-defined chain)
+  # =========================================================================
+  DOCKER-USER:
+    filter:
+      # Return on allowed port (multi-protocol), drop everything else
+      - {p: [tcp, udp], dp: 50350, j: return}
+      - {p: tcp, dp: 8282, j: drop}
+
+  # =========================================================================
+  # SSHBRUTE — SSH brute-force protection (user-defined chain)
+  # Uses: recent match, multi-match object syntax, log
+  # =========================================================================
+  SSHBRUTE:
+    filter:
+      - {match: {recent: {name: SSH, set: true}}}
+      - {
+          match: {
+            recent: {name: SSH, update: true, seconds: 300, hitcount: 10},
+            limit:  {limit: 1/second, limit-burst: 100}
+          },
+          log-prefix: "iptables[SSH-brute]: ",
+          j: log
+        }
+      - {match: {recent: {name: SSH, update: true, seconds: 300, hitcount: 10}}, j: drop}
+      - {j: accept}
+
+  # =========================================================================
+  # ICMPFLOOD — ICMP flood protection (user-defined chain)
+  # Uses: recent match with rsource + rttl flags, multi-match object syntax
+  # =========================================================================
+  ICMPFLOOD:
+    filter:
+      - {match: {recent: {set: true, name: ICMP, rsource: true}}}
+      - {
+          match: {
+            recent: {update: true, seconds: 1, hitcount: 6, name: ICMP, rsource: true, rttl: true},
+            limit:  {limit: 1/sec, limit-burst: 1}
+          },
+          log-prefix: "iptables[ICMP-flood]: ",
+          j: log
+        }
+      - {match: {recent: {update: true, seconds: 1, hitcount: 6, name: ICMP, rsource: true, rttl: true}}, j: drop}
+      - {j: accept}
+
+  # =========================================================================
+  # XRAY — tproxy routing (mangle table)
+  # Uses: destination negation (dp!), mark match, tproxy target
+  # =========================================================================
+  XRAY:
+    mangle:
+      - {d: 127.0.0.1/32,        j: return}
+      - {d: 224.0.0.0/4,         j: return}
+      - {d: 255.255.255.255/32,   j: return}
+      - {d: 192.168.0.0/16, p: tcp,              j: return}
+      - {d: 192.168.0.0/16, p: udp, dp!: 53,     j: return}
+      - {d: "::1/128",            j: return}
+      - {d: fe80::/10,            j: return}
+      - {d: fd00::/8, p: tcp,                    j: return}
+      - {d: fd00::/8, p: udp, dp!: 53,           j: return}
+      # mark match
+      - {match: {mark: {mark: "0xff"}}, j: return}
+      # tproxy target with on-ip / on-port / tproxy-mark
+      - {p: [udp, tcp], on-ip: 127.0.0.1, on-port: 12345, tproxy-mark: 1, j: tproxy}
+      - {p: [udp, tcp], on-ip: "::1",     on-port: 12345, tproxy-mark: 1, j: tproxy}
+
+  # =========================================================================
+  # XRAY_MASK — set-mark for OUTPUT traffic (mangle table)
+  # Uses: set-mark + j: mark target
+  # =========================================================================
+  XRAY_MASK:
+    mangle:
+      - {d: 224.0.0.0/4,         j: return}
+      - {d: 255.255.255.255/32,   j: return}
+      - {d: 192.168.0.0/16, p: tcp,              j: return}
+      - {d: 192.168.0.0/16, p: udp, dp!: 53,     j: return}
+      - {d: fe80::/10,            j: return}
+      - {d: fd00::/8, p: tcp,                    j: return}
+      - {d: fd00::/8, p: udp, dp!: 53,           j: return}
+      - {match: {mark: {mark: "0xff"}}, j: return}
+      # set-mark + mark target
+      - {p: [udp, tcp], set-mark: 1, j: mark}
+
+  # =========================================================================
+  # DIVERT — socket divert (mangle table)
+  # =========================================================================
+  DIVERT:
+    mangle:
+      - {set-mark: 1, j: mark}
+      - {j: accept}
