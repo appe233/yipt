@@ -109,8 +109,124 @@ func validateRules(chainName, table string, rules []ast.Rule, resources map[stri
 		if len(rule.LogPrefix) > 29 {
 			return fmt.Errorf("%s: log-prefix %q exceeds 29-character limit", ctx, rule.LogPrefix)
 		}
+		if err := validateConflicts(ctx, rule); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// validateConflicts checks for semantically contradictory field combinations.
+func validateConflicts(ctx string, rule ast.Rule) error {
+	// Collect the set of explicit protocols from the p: field.
+	protos := collectProtos(rule.Proto)
+
+	hasPort := rule.SPort != nil || rule.DPort != nil || rule.SPortNeg != nil || rule.DPortNeg != nil
+
+	// If any port field is set, protocol must include tcp or udp.
+	if hasPort && len(protos) > 0 {
+		hasPortProto := false
+		for _, p := range protos {
+			pl := strings.ToLower(p)
+			if pl == "tcp" || pl == "udp" {
+				hasPortProto = true
+				break
+			}
+		}
+		if !hasPortProto {
+			return fmt.Errorf("%s: port match (sp/dp) requires p: tcp or udp, got %v", ctx, protos)
+		}
+	}
+
+	// icmp-type requires p: icmp (when protocol is explicitly set).
+	if rule.ICMPType != nil && len(protos) > 0 {
+		hasICMP := false
+		for _, p := range protos {
+			if strings.ToLower(p) == "icmp" {
+				hasICMP = true
+				break
+			}
+		}
+		if !hasICMP {
+			return fmt.Errorf("%s: icmp-type requires p: icmp, got %v", ctx, protos)
+		}
+	}
+
+	// icmpv6-type requires p: ipv6-icmp (when protocol is explicitly set).
+	if rule.ICMPv6Type != nil && len(protos) > 0 {
+		hasICMPv6 := false
+		for _, p := range protos {
+			if strings.ToLower(p) == "ipv6-icmp" {
+				hasICMPv6 = true
+				break
+			}
+		}
+		if !hasICMPv6 {
+			return fmt.Errorf("%s: icmpv6-type requires p: ipv6-icmp, got %v", ctx, protos)
+		}
+	}
+
+	// icmp-type and icmpv6-type are mutually exclusive in a single rule.
+	if rule.ICMPType != nil && rule.ICMPv6Type != nil {
+		return fmt.Errorf("%s: icmp-type and icmpv6-type cannot both be set in one rule", ctx)
+	}
+
+	// Detect IP version contradiction between src and dst plain addresses.
+	srcVer := addrFieldVersion(rule.Src, rule.SrcNeg)
+	dstVer := addrFieldVersion(rule.Dst, rule.DstNeg)
+	if srcVer != 0 && dstVer != 0 && srcVer != dstVer {
+		return fmt.Errorf("%s: IPv4/IPv6 version conflict between s (%s) and d (%s)", ctx, addrStr(rule.Src, rule.SrcNeg), addrStr(rule.Dst, rule.DstNeg))
+	}
+
+	return nil
+}
+
+// collectProtos returns the list of protocol strings from a rule's Proto field.
+// Returns nil if no protocol is set.
+func collectProtos(proto interface{}) []string {
+	if proto == nil {
+		return nil
+	}
+	switch p := proto.(type) {
+	case string:
+		return []string{p}
+	case []interface{}:
+		var out []string
+		for _, v := range p {
+			if s, ok := v.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// addrFieldVersion returns the IP version (4 or 6) of a plain (non-set) address field,
+// or 0 if the field is empty, a resource ref, or unclassifiable.
+func addrFieldVersion(addr, addrNeg string) int {
+	a := addr
+	if a == "" {
+		a = addrNeg
+	}
+	if a == "" || strings.HasPrefix(a, "$") {
+		return 0
+	}
+	v := ClassifyAddr(a)
+	if v == IPv4Only {
+		return 4
+	}
+	if v == IPv6Only {
+		return 6
+	}
+	return 0
+}
+
+func addrStr(addr, addrNeg string) string {
+	if addr != "" {
+		return addr
+	}
+	return addrNeg
 }
 
 func validateAddrRef(ctx, field, val string, resources map[string]*ResolvedResource) error {

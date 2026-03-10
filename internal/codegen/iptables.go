@@ -8,7 +8,7 @@ import (
 )
 
 // tableOrder defines which tables to emit and in what order.
-var tableOrder = []string{"filter", "mangle"}
+var tableOrder = []string{"filter", "nat", "mangle"}
 
 // RenderIptablesRestore renders the iptables-restore compatible output.
 func RenderIptablesRestore(prog *ir.Program) string {
@@ -204,6 +204,36 @@ func renderRule(r *ir.IRRule) string {
 		}
 	case "MARK":
 		parts = append(parts, "-j", "MARK", "--set-mark", r.SetMark)
+	case "MASQUERADE":
+		if r.ToPorts != "" {
+			parts = append(parts, "-j", "MASQUERADE", "--to-ports", r.ToPorts)
+		} else {
+			parts = append(parts, "-j", "MASQUERADE")
+		}
+	case "SNAT":
+		args := []string{"-j", "SNAT"}
+		if r.ToSource != "" {
+			args = append(args, "--to-source", r.ToSource)
+		}
+		if r.ToPorts != "" {
+			args = append(args, "--to-ports", r.ToPorts)
+		}
+		parts = append(parts, args...)
+	case "DNAT":
+		args := []string{"-j", "DNAT"}
+		if r.ToDest != "" {
+			args = append(args, "--to-destination", r.ToDest)
+		}
+		if r.ToPorts != "" {
+			args = append(args, "--to-ports", r.ToPorts)
+		}
+		parts = append(parts, args...)
+	case "REDIRECT":
+		if r.ToPorts != "" {
+			parts = append(parts, "-j", "REDIRECT", "--to-ports", r.ToPorts)
+		} else {
+			parts = append(parts, "-j", "REDIRECT")
+		}
 	case "TPROXY":
 		tArgs := []string{"-j", "TPROXY"}
 		if r.OnIP != "" {

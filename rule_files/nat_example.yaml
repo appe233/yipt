@@ -1,0 +1,15 @@
+# NAT table example demonstrating MASQUERADE, SNAT, DNAT, and REDIRECT targets.
+
+chains:
+
+  # POSTROUTING: MASQUERADE for outbound traffic, SNAT for specific source
+  POSTROUTING:
+    nat:
+      - {o: eth0, j: masquerade}
+      - {s: 10.0.0.0/8, o: eth0, to-source: "203.0.113.1", j: snat}
+
+  # PREROUTING: port forwarding (DNAT and REDIRECT)
+  PREROUTING:
+    nat:
+      - {p: tcp, dp: 80, to-destination: "192.168.1.100", to-ports: "8080", j: dnat}
+      - {p: tcp, dp: 8888, to-ports: "80", j: redirect}

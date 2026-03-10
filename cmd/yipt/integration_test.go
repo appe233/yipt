@@ -11,6 +11,7 @@ import (
 )
 
 const allFeaturesYAML = "../../rule_files/all_features.yaml"
+const natExampleYAML = "../../rule_files/nat_example.yaml"
 
 func buildOutput(t *testing.T) (iptables, ipset string) {
 	t.Helper()
@@ -90,6 +91,58 @@ func TestIntegration_Comment(t *testing.T) {
 func TestIntegration_IpsetCreateExist(t *testing.T) {
 	_, ipset := buildOutput(t)
 	if !strings.Contains(ipset, "ipset create -exist trusted_networks hash:net family inet") {
-		t.Errorf("expected 'ipset create -exist trusted_networks'\nOutput:\n%s", ipset)
+		t.Errorf("expected 'ipset create -exist trusted_networks'\\nOutput:\\n%s", ipset)
+	}
+}
+
+func buildNATOutput(t *testing.T) string {
+	t.Helper()
+	doc, err := parser.ParseFile(natExampleYAML)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	resolved, err := sema.Analyze(doc)
+	if err != nil {
+		t.Fatalf("sema: %v", err)
+	}
+	prog, err := ir.Build(resolved)
+	if err != nil {
+		t.Fatalf("ir: %v", err)
+	}
+	return codegen.RenderIptablesRestore(prog)
+}
+
+func TestIntegration_NATTable(t *testing.T) {
+	ipt := buildNATOutput(t)
+	if !strings.Contains(ipt, "*nat") {
+		t.Errorf("expected *nat block\\nOutput:\\n%s", ipt)
+	}
+}
+
+func TestIntegration_NATMasquerade(t *testing.T) {
+	ipt := buildNATOutput(t)
+	if !strings.Contains(ipt, "-j MASQUERADE") {
+		t.Errorf("expected -j MASQUERADE\\nOutput:\\n%s", ipt)
+	}
+}
+
+func TestIntegration_NATSNAT(t *testing.T) {
+	ipt := buildNATOutput(t)
+	if !strings.Contains(ipt, "-j SNAT --to-source 203.0.113.1") {
+		t.Errorf("expected -j SNAT --to-source 203.0.113.1\\nOutput:\\n%s", ipt)
+	}
+}
+
+func TestIntegration_NATDNAT(t *testing.T) {
+	ipt := buildNATOutput(t)
+	if !strings.Contains(ipt, "-j DNAT --to-destination 192.168.1.100 --to-ports 8080") {
+		t.Errorf("expected -j DNAT --to-destination ...\\nOutput:\\n%s", ipt)
+	}
+}
+
+func TestIntegration_NATRedirect(t *testing.T) {
+	ipt := buildNATOutput(t)
+	if !strings.Contains(ipt, "-j REDIRECT --to-ports 80") {
+		t.Errorf("expected -j REDIRECT --to-ports 80\\nOutput:\\n%s", ipt)
 	}
 }

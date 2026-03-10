@@ -211,3 +211,113 @@ func TestRenderRule_SingleDport(t *testing.T) {
 		t.Errorf("expected --dport 22, got: %s", got)
 	}
 }
+
+func TestRenderRule_Masquerade(t *testing.T) {
+	r := &ir.IRRule{
+		Chain: "POSTROUTING",
+		Jump:  "MASQUERADE",
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-j MASQUERADE") {
+		t.Errorf("expected -j MASQUERADE, got: %s", got)
+	}
+}
+
+func TestRenderRule_MasqueradeWithToPorts(t *testing.T) {
+	r := &ir.IRRule{
+		Chain:   "POSTROUTING",
+		Jump:    "MASQUERADE",
+		ToPorts: "1024-65535",
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-j MASQUERADE --to-ports 1024-65535") {
+		t.Errorf("expected -j MASQUERADE --to-ports 1024-65535, got: %s", got)
+	}
+}
+
+func TestRenderRule_SNAT(t *testing.T) {
+	r := &ir.IRRule{
+		Chain:    "POSTROUTING",
+		Jump:     "SNAT",
+		ToSource: "203.0.113.1",
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-j SNAT --to-source 203.0.113.1") {
+		t.Errorf("expected -j SNAT --to-source, got: %s", got)
+	}
+}
+
+func TestRenderRule_DNAT(t *testing.T) {
+	r := &ir.IRRule{
+		Chain:  "PREROUTING",
+		Jump:   "DNAT",
+		ToDest: "192.168.1.100",
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-j DNAT --to-destination 192.168.1.100") {
+		t.Errorf("expected -j DNAT --to-destination, got: %s", got)
+	}
+}
+
+func TestRenderRule_Redirect(t *testing.T) {
+	r := &ir.IRRule{
+		Chain:   "PREROUTING",
+		Jump:    "REDIRECT",
+		ToPorts: "8080",
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-j REDIRECT --to-ports 8080") {
+		t.Errorf("expected -j REDIRECT --to-ports 8080, got: %s", got)
+	}
+}
+
+func TestRenderRule_RedirectNoPorts(t *testing.T) {
+	r := &ir.IRRule{
+		Chain: "PREROUTING",
+		Jump:  "REDIRECT",
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-j REDIRECT") {
+		t.Errorf("expected -j REDIRECT, got: %s", got)
+	}
+	if strings.Contains(got, "--to-ports") {
+		t.Errorf("unexpected --to-ports in REDIRECT without ToPorts, got: %s", got)
+	}
+}
+
+func TestRenderRule_MatchMAC(t *testing.T) {
+	r := &ir.IRRule{
+		IPVersion:      4,
+		Chain:          "INPUT",
+		Jump:           "ACCEPT",
+		MatchFragments: []string{"-m mac --mac-source aa:bb:cc:dd:ee:ff"},
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-m mac --mac-source aa:bb:cc:dd:ee:ff") {
+		t.Errorf("expected mac match fragment, got: %s", got)
+	}
+}
+
+func TestRenderRule_MatchTime(t *testing.T) {
+	r := &ir.IRRule{
+		Chain:          "INPUT",
+		Jump:           "DROP",
+		MatchFragments: []string{"-m time --timestart 08:00 --timestop 18:00 --weekdays Mon,Tue,Wed,Thu,Fri"},
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-m time --timestart 08:00") {
+		t.Errorf("expected time match fragment, got: %s", got)
+	}
+}
+
+func TestRenderRule_MatchState(t *testing.T) {
+	r := &ir.IRRule{
+		Chain:          "INPUT",
+		Jump:           "ACCEPT",
+		MatchFragments: []string{"-m state --state ESTABLISHED,RELATED"},
+	}
+	got := renderRule(r)
+	if !strings.Contains(got, "-m state --state ESTABLISHED,RELATED") {
+		t.Errorf("expected state match fragment, got: %s", got)
+	}
+}

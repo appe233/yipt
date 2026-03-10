@@ -76,10 +76,15 @@ type IRRule struct {
 	TProxyMark string
 	OnIP       string
 	OnPort     int
+	// NAT targets
+	ToSource string
+	ToDest   string
+	ToPorts  string
 }
 
 var filterBuiltins = []string{"INPUT", "FORWARD", "OUTPUT"}
 var mangleBuiltins = []string{"PREROUTING", "INPUT", "FORWARD", "OUTPUT", "POSTROUTING"}
+var natBuiltins = []string{"PREROUTING", "INPUT", "OUTPUT", "POSTROUTING"}
 
 func isBuiltin(table, name string) bool {
 	var list []string
@@ -88,6 +93,8 @@ func isBuiltin(table, name string) bool {
 		list = filterBuiltins
 	case "mangle":
 		list = mangleBuiltins
+	case "nat":
+		list = natBuiltins
 	}
 	for _, b := range list {
 		if b == name {
@@ -151,6 +158,11 @@ func Build(res *sema.Resolved) (*Program, error) {
 		if len(chain.Mangle) > 0 {
 			chainsByTable["mangle"] = append(chainsByTable["mangle"], tableChain{"mangle", chainName})
 		}
+		// A chain goes into the nat table if it has nat rules, or if it has a policy
+		// and is a nat built-in.
+		if len(chain.Nat) > 0 || (chain.Policy != "" && isBuiltin("nat", chainName)) {
+			chainsByTable["nat"] = append(chainsByTable["nat"], tableChain{"nat", chainName})
+		}
 	}
 
 	// For each table, order built-ins first then user-defined, then compile rules.
@@ -166,6 +178,8 @@ func Build(res *sema.Resolved) (*Program, error) {
 			builtinOrder = filterBuiltins
 		case "mangle":
 			builtinOrder = mangleBuiltins
+		case "nat":
+			builtinOrder = natBuiltins
 		}
 		for _, bn := range builtinOrder {
 			for _, tc := range tcs {
@@ -191,11 +205,13 @@ func Build(res *sema.Resolved) (*Program, error) {
 				rules = chain.Filter
 			case "mangle":
 				rules = chain.Mangle
+			case "nat":
+				rules = chain.Nat
 			}
 
 			policy := ""
-			// Policy only applies to the filter table; mangle built-ins default to ACCEPT.
-			if chain.Policy != "" && isBuiltin(table, chainName) && table == "filter" {
+			// Policy applies to filter and nat built-in chains; mangle built-ins default to ACCEPT.
+			if chain.Policy != "" && isBuiltin(table, chainName) && (table == "filter" || table == "nat") {
 				policy = strings.ToUpper(chain.Policy)
 			}
 
@@ -377,6 +393,20 @@ func expandRule(chainName string, rule ast.Rule, resources map[string]*sema.Reso
 				v := sema.ClassifyAddr(rule.OnIP)
 				b.IPVersion = mergeVersion(b.IPVersion, int(v))
 			}
+		case "masquerade":
+			b.Jump = "MASQUERADE"
+			b.ToPorts = rule.ToPorts
+		case "snat":
+			b.Jump = "SNAT"
+			b.ToSource = rule.ToSource
+			b.ToPorts = rule.ToPorts
+		case "dnat":
+			b.Jump = "DNAT"
+			b.ToDest = rule.ToDest
+			b.ToPorts = rule.ToPorts
+		case "redirect":
+			b.Jump = "REDIRECT"
+			b.ToPorts = rule.ToPorts
 		case "":
 			b.Jump = ""
 		default:
@@ -678,6 +708,32 @@ func buildMatchFragments(mb *ast.MatchBlock) ([]string, int, error) {
 	if mb.AddrType != nil {
 		frags = append(frags, fmt.Sprintf("-m addrtype --dst-type %s", mb.AddrType.DstType))
 		ipv = 4 // addrtype is IPv4-only
+	}
+
+	if mb.MAC != nil {
+		frags = append(frags, fmt.Sprintf("-m mac --mac-source %s", mb.MAC.MACSource))
+		ipv = mergeVersion(ipv, 4) // mac matching is IPv4-only in iptables
+	}
+
+	if mb.Time != nil {
+		tm := mb.Time
+		var parts []string
+		parts = append(parts, "-m time")
+		if tm.TimeStart != "" {
+			parts = append(parts, "--timestart", tm.TimeStart)
+		}
+		if tm.TimeStop != "" {
+			parts = append(parts, "--timestop", tm.TimeStop)
+		}
+		if tm.Days != "" {
+			parts = append(parts, "--weekdays", tm.Days)
+		}
+		frags = append(frags, strings.Join(parts, " "))
+	}
+
+	if mb.State != nil {
+		states := strings.Join(mb.State.State, ",")
+		frags = append(frags, fmt.Sprintf("-m state --state %s", states))
 	}
 
 	return frags, ipv, nil

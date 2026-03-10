@@ -19,6 +19,7 @@ type Chain struct {
 	Policy string `yaml:"policy"`
 	Filter []Rule `yaml:"filter"`
 	Mangle []Rule `yaml:"mangle"`
+	Nat    []Rule `yaml:"nat"`
 }
 
 // Rule represents a single iptables rule.
@@ -49,6 +50,10 @@ type Rule struct {
 	TProxyMark interface{} // int | string
 	OnIP       string
 	OnPort     int
+	// NAT-specific target fields
+	ToSource string
+	ToDest   string
+	ToPorts  string
 	Match      *MatchBlock
 }
 
@@ -150,6 +155,12 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 			if err := val.Decode(&r.OnPort); err != nil {
 				return err
 			}
+		case "to-source":
+			r.ToSource = val.Value
+		case "to-destination":
+			r.ToDest = val.Value
+		case "to-ports":
+			r.ToPorts = val.Value
 		case "match":
 			mb := &MatchBlock{}
 			if err := val.Decode(mb); err != nil {
@@ -169,6 +180,9 @@ type MatchBlock struct {
 	Mark      *MarkMatch      `yaml:"mark"`
 	Socket    *SocketMatch    `yaml:"socket"`
 	AddrType  *AddrTypeMatch  `yaml:"addrtype"`
+	MAC       *MACMatch       `yaml:"mac"`
+	Time      *TimeMatch      `yaml:"time"`
+	State     *StateMatch     `yaml:"state"`
 }
 
 // ConntrackMatch represents the conntrack match module.
@@ -204,4 +218,21 @@ type SocketMatch struct{}
 // AddrTypeMatch represents the addrtype match module.
 type AddrTypeMatch struct {
 	DstType string `yaml:"dst-type"`
+}
+
+// MACMatch represents the mac match module.
+type MACMatch struct {
+	MACSource string `yaml:"mac-source"`
+}
+
+// TimeMatch represents the time match module.
+type TimeMatch struct {
+	TimeStart string `yaml:"timestart"`
+	TimeStop  string `yaml:"timestop"`
+	Days      string `yaml:"weekdays"`
+}
+
+// StateMatch represents the legacy state match module.
+type StateMatch struct {
+	State []string `yaml:"state"`
 }

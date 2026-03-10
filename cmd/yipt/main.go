@@ -44,7 +44,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	iptablesOut := codegen.RenderIptablesRestore(prog)
+	backend := codegen.IptablesBackend{}
+	iptablesOut := backend.Render(prog)
 	ipsetScript := codegen.RenderIpsetScript(prog)
 
 	fmt.Print(iptablesOut)
