@@ -2,6 +2,7 @@ package sema
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"yipt/internal/ast"
@@ -11,6 +12,7 @@ import (
 type Resolved struct {
 	Doc       *ast.Document
 	Resources map[string]*ResolvedResource
+	Warnings  []string
 }
 
 // ResolvedResource is a resource with classification applied.
@@ -67,6 +69,14 @@ func Analyze(doc *ast.Document) (*Resolved, error) {
 		}
 		if err := validateRules(chainName, "mangle", chain.Mangle, res.Resources); err != nil {
 			return nil, err
+		}
+	}
+
+	// Step 3: warn about unused resources.
+	used := collectUsedRefs(doc)
+	for _, name := range sortedKeys(doc.Resources) {
+		if !used[name] {
+			res.Warnings = append(res.Warnings, fmt.Sprintf("warning: resource \"$%s\" is defined but never used", name))
 		}
 	}
 
@@ -280,4 +290,48 @@ func validateICMPRef(ctx, field string, val interface{}, expectedType string, re
 		return fmt.Errorf("%s field %s: $%s is %s, expected %s", ctx, field, name, r.Type, expectedType)
 	}
 	return nil
+}
+
+// collectUsedRefs returns a set of resource names referenced (as $name) in any rule field.
+func collectUsedRefs(doc *ast.Document) map[string]bool {
+	used := make(map[string]bool)
+	for _, chain := range doc.Chains {
+		for _, rules := range [][]ast.Rule{chain.Filter, chain.Mangle, chain.Nat} {
+			for _, rule := range rules {
+				addStrRef(used, rule.Src)
+				addStrRef(used, rule.SrcNeg)
+				addStrRef(used, rule.Dst)
+				addStrRef(used, rule.DstNeg)
+				addIfaceRef(used, rule.SPort)
+				addIfaceRef(used, rule.SPortNeg)
+				addIfaceRef(used, rule.DPort)
+				addIfaceRef(used, rule.DPortNeg)
+				addIfaceRef(used, rule.ICMPType)
+				addIfaceRef(used, rule.ICMPv6Type)
+			}
+		}
+	}
+	return used
+}
+
+func addStrRef(used map[string]bool, s string) {
+	if strings.HasPrefix(s, "$") {
+		used[s[1:]] = true
+	}
+}
+
+func addIfaceRef(used map[string]bool, v interface{}) {
+	if s, ok := v.(string); ok {
+		addStrRef(used, s)
+	}
+}
+
+// sortedKeys returns sorted keys of a map for deterministic output.
+func sortedKeys[K ~string, V any](m map[K]V) []K {
+	keys := make([]K, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
 }

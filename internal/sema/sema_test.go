@@ -17,9 +17,9 @@ func makeDoc(resources map[string]ast.Resource, chains map[string]ast.Chain) *as
 func TestAnalyze_ValidDocument(t *testing.T) {
 	doc := makeDoc(
 		map[string]ast.Resource{
-			"nets": {Type: "ipset", Elements: []interface{}{"10.0.0.0/8", "192.168.0.0/16"}},
-			"ports": {Type: "portset", Elements: []interface{}{80, 443}},
-			"icmptypes": {Type: "icmp_typeset", Elements: []interface{}{0, 3, 11}},
+			"nets":        {Type: "ipset", Elements: []interface{}{"10.0.0.0/8", "192.168.0.0/16"}},
+			"ports":       {Type: "portset", Elements: []interface{}{80, 443}},
+			"icmptypes":   {Type: "icmp_typeset", Elements: []interface{}{0, 3, 11}},
 			"icmpv6types": {Type: "icmpv6_typeset", Elements: []interface{}{1, 2, 3}},
 		},
 		map[string]ast.Chain{
@@ -27,13 +27,18 @@ func TestAnalyze_ValidDocument(t *testing.T) {
 				Filter: []ast.Rule{
 					{Src: "$nets", Jump: "accept"},
 					{DPort: "$ports", Jump: "accept"},
+					{Proto: "icmp", ICMPType: "$icmptypes", Jump: "accept"},
+					{Proto: "ipv6-icmp", ICMPv6Type: "$icmpv6types", Jump: "accept"},
 				},
 			},
 		},
 	)
-	_, err := Analyze(doc)
+	resolved, err := Analyze(doc)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(resolved.Warnings) != 0 {
+		t.Errorf("expected no warnings, got: %v", resolved.Warnings)
 	}
 }
 
@@ -267,5 +272,55 @@ func TestValidateConflicts_PortNoProto(t *testing.T) {
 	_, err := Analyze(doc)
 	if err != nil {
 		t.Fatalf("expected no error for port without explicit proto, got: %v", err)
+	}
+}
+
+func TestAnalyze_UnusedResource(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{
+			"unused_nets": {Type: "ipset", Elements: []interface{}{"10.0.0.0/8"}},
+		},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Jump: "accept"},
+				},
+			},
+		},
+	)
+	resolved, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(resolved.Warnings) == 0 {
+		t.Fatal("expected a warning for unused resource, got none")
+	}
+	if !strings.Contains(resolved.Warnings[0], "$unused_nets") {
+		t.Errorf("expected warning to mention $unused_nets, got: %v", resolved.Warnings[0])
+	}
+	if !strings.Contains(resolved.Warnings[0], "never used") {
+		t.Errorf("expected warning to mention 'never used', got: %v", resolved.Warnings[0])
+	}
+}
+
+func TestAnalyze_UsedResourceNoWarning(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{
+			"my_nets": {Type: "ipset", Elements: []interface{}{"192.168.0.0/16"}},
+		},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Src: "$my_nets", Jump: "accept"},
+				},
+			},
+		},
+	)
+	resolved, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if len(resolved.Warnings) != 0 {
+		t.Errorf("expected no warnings for used resource, got: %v", resolved.Warnings)
 	}
 }

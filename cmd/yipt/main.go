@@ -37,6 +37,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "semantic error: %v\n", err)
 		os.Exit(1)
 	}
+	for _, w := range resolved.Warnings {
+		fmt.Fprintln(os.Stderr, w)
+	}
 
 	prog, err := ir.Build(resolved)
 	if err != nil {

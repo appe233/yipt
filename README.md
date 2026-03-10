@@ -15,7 +15,7 @@ YAML file → Parser → Semantic Analysis → IR → Code Generation → output
 ```
 
 1. **Parser** — reads the YAML into an AST
-2. **Semantic analysis** — validates all `$resource` references and IP version constraints
+2. **Semantic analysis** — validates all `$resource` references and IP version constraints; warns about unused resources
 3. **IR (Intermediate Representation)** — expands protocol lists, ICMP typesets, and mixed ipsets into individual rules; infers IP versions
 4. **Code generation** — renders `iptables-restore` format and `ipset` shell commands
 
@@ -41,6 +41,7 @@ yipt [--ipset-out FILE] input.yaml
 
 - Writes `iptables-restore` output to **stdout**.
 - With `--ipset-out FILE`: writes the `ipset` creation script to `FILE`. Without it, the ipset script is appended to stdout after the iptables output.
+- Warnings (e.g. unused resources) are printed to **stderr** and do not affect the generated output.
 
 ### Applying the output
 
@@ -111,6 +112,14 @@ resources:
 ```
 
 **Mixed ipsets** (containing both IPv4 and IPv6 addresses) are automatically split at compile time into two ipsets named `NAME_v4` and `NAME_v6`, and two separate rules are emitted for each rule that references them.
+
+If a resource is defined but not referenced in any rule, `yipt` prints a warning to stderr:
+
+```
+warning: resource "$trusted_networks" is defined but never used
+```
+
+The warning does not affect the generated output or exit code.
 
 ### Chains
 
