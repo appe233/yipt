@@ -2,11 +2,14 @@ package sema
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
 	"yipt/internal/ast"
 )
+
+var validIfaceRe = regexp.MustCompile(`^[a-zA-Z0-9\-\.+]+$`)
 
 // Resolved holds the analyzed document with classified resources.
 type Resolved struct {
@@ -70,6 +73,9 @@ func Analyze(doc *ast.Document) (*Resolved, error) {
 		if err := validateRules(chainName, "mangle", chain.Mangle, res.Resources); err != nil {
 			return nil, err
 		}
+		if err := validateRules(chainName, "nat", chain.Nat, res.Resources); err != nil {
+			return nil, err
+		}
 	}
 
 	// Step 3: warn about unused resources.
@@ -118,6 +124,55 @@ func validateRules(chainName, table string, rules []ast.Rule, resources map[stri
 		}
 		if len(rule.LogPrefix) > 29 {
 			return fmt.Errorf("%s: log-prefix %q exceeds 29-character limit", ctx, rule.LogPrefix)
+		}
+		if len(rule.Comment) > 256 {
+			return fmt.Errorf("%s: comment exceeds 256-character limit", ctx)
+		}
+		// Validate string fields for unsafe characters.
+		if err := validateStringField(ctx, "log-prefix", rule.LogPrefix); err != nil {
+			return err
+		}
+		if err := validateStringField(ctx, "comment", rule.Comment); err != nil {
+			return err
+		}
+		// Validate interface names.
+		if err := validateInterfaceName(ctx, "i", rule.In); err != nil {
+			return err
+		}
+		if err := validateInterfaceName(ctx, "i!", rule.InNeg); err != nil {
+			return err
+		}
+		if err := validateInterfaceName(ctx, "o", rule.Out); err != nil {
+			return err
+		}
+		if err := validateInterfaceName(ctx, "o!", rule.OutNeg); err != nil {
+			return err
+		}
+		// Validate address values.
+		if err := validateAddrValue(ctx, "s", rule.Src); err != nil {
+			return err
+		}
+		if err := validateAddrValue(ctx, "s!", rule.SrcNeg); err != nil {
+			return err
+		}
+		if err := validateAddrValue(ctx, "d", rule.Dst); err != nil {
+			return err
+		}
+		if err := validateAddrValue(ctx, "d!", rule.DstNeg); err != nil {
+			return err
+		}
+		// Validate port values.
+		if err := validatePortValue(ctx, "sp", rule.SPort); err != nil {
+			return err
+		}
+		if err := validatePortValue(ctx, "sp!", rule.SPortNeg); err != nil {
+			return err
+		}
+		if err := validatePortValue(ctx, "dp", rule.DPort); err != nil {
+			return err
+		}
+		if err := validatePortValue(ctx, "dp!", rule.DPortNeg); err != nil {
+			return err
 		}
 		if err := validateConflicts(ctx, rule); err != nil {
 			return err
@@ -288,6 +343,64 @@ func validateICMPRef(ctx, field string, val interface{}, expectedType string, re
 	}
 	if r.Type != expectedType {
 		return fmt.Errorf("%s field %s: $%s is %s, expected %s", ctx, field, name, r.Type, expectedType)
+	}
+	return nil
+}
+
+// validateStringField rejects characters that would break iptables-restore syntax.
+func validateStringField(ctx, field, val string) error {
+	if val == "" {
+		return nil
+	}
+	if strings.ContainsAny(val, "\"\n\r\x00") {
+		return fmt.Errorf("%s field %s: contains invalid character (quotes, newlines, or null bytes are not allowed)", ctx, field)
+	}
+	return nil
+}
+
+// validateInterfaceName checks Linux interface name constraints (max 15 chars, alphanumeric/dash/dot/plus).
+func validateInterfaceName(ctx, field, val string) error {
+	if val == "" {
+		return nil
+	}
+	if len(val) > 15 {
+		return fmt.Errorf("%s field %s: interface name %q exceeds 15-character limit", ctx, field, val)
+	}
+	if !validIfaceRe.MatchString(val) {
+		return fmt.Errorf("%s field %s: interface name %q contains invalid characters", ctx, field, val)
+	}
+	return nil
+}
+
+// validateAddrValue rejects non-resource address strings that are not valid IPs or CIDRs.
+func validateAddrValue(ctx, field, val string) error {
+	if val == "" || strings.HasPrefix(val, "$") {
+		return nil
+	}
+	if ClassifyAddr(val) == IPvUnknown {
+		return fmt.Errorf("%s field %s: %q is not a valid IP address or CIDR", ctx, field, val)
+	}
+	return nil
+}
+
+// validatePortValue checks that port numbers are in the valid range 0-65535.
+func validatePortValue(ctx, field string, val interface{}) error {
+	if val == nil {
+		return nil
+	}
+	switch v := val.(type) {
+	case int:
+		if v < 0 || v > 65535 {
+			return fmt.Errorf("%s field %s: port %d is outside valid range 0-65535", ctx, field, v)
+		}
+	case []interface{}:
+		for _, elem := range v {
+			if port, ok := elem.(int); ok {
+				if port < 0 || port > 65535 {
+					return fmt.Errorf("%s field %s: port %d is outside valid range 0-65535", ctx, field, port)
+				}
+			}
+		}
 	}
 	return nil
 }

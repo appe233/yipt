@@ -324,3 +324,321 @@ func TestAnalyze_UsedResourceNoWarning(t *testing.T) {
 		t.Errorf("expected no warnings for used resource, got: %v", resolved.Warnings)
 	}
 }
+
+// === Fix 1: NAT rules are now validated ===
+
+func TestAnalyze_NatUnknownRef(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"POSTROUTING": {
+				Nat: []ast.Rule{
+					{Src: "$nonexistent", Jump: "masquerade"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for unknown resource ref in NAT rule")
+	}
+	if !strings.Contains(err.Error(), "unknown resource") {
+		t.Errorf("expected 'unknown resource' in error, got: %v", err)
+	}
+}
+
+func TestAnalyze_NatProtocolPortConflict(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"PREROUTING": {
+				Nat: []ast.Rule{
+					{Proto: "icmp", DPort: 80, Jump: "dnat", ToDest: "10.0.0.1"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for port with icmp in NAT rule")
+	}
+	if !strings.Contains(err.Error(), "requires p: tcp or udp") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_NatLogPrefixTooLong(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"PREROUTING": {
+				Nat: []ast.Rule{
+					{LogPrefix: "this prefix is way too long for iptables", Jump: "log"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for oversized log-prefix in NAT rule")
+	}
+	if !strings.Contains(err.Error(), "log-prefix") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+// === Fix 2: Comment length limit ===
+
+func TestAnalyze_CommentTooLong(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Comment: strings.Repeat("x", 257), Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for comment > 256 chars")
+	}
+	if !strings.Contains(err.Error(), "comment exceeds 256") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_CommentExactly256(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Comment: strings.Repeat("x", 256), Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for 256-char comment, got: %v", err)
+	}
+}
+
+// === Fix 3: String field and interface name validation ===
+
+func TestAnalyze_CommentWithQuote(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Comment: `say "hello"`, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for comment containing quotes")
+	}
+	if !strings.Contains(err.Error(), "invalid character") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_LogPrefixWithNewline(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{LogPrefix: "bad\nprefix", Jump: "log"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for log-prefix with newline")
+	}
+	if !strings.Contains(err.Error(), "invalid character") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_InterfaceTooLong(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{In: "abcdefghijklmnop", Jump: "accept"}, // 16 chars
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for interface name > 15 chars")
+	}
+	if !strings.Contains(err.Error(), "exceeds 15-character limit") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_InterfaceWithSpace(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{In: "eth 0", Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for interface name with space")
+	}
+	if !strings.Contains(err.Error(), "invalid characters") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_ValidInterfaces(t *testing.T) {
+	for _, iface := range []string{"eth0", "wg0", "br-lan", "eth+"} {
+		doc := makeDoc(
+			map[string]ast.Resource{},
+			map[string]ast.Chain{
+				"INPUT": {
+					Filter: []ast.Rule{
+						{In: iface, Jump: "accept"},
+					},
+				},
+			},
+		)
+		_, err := Analyze(doc)
+		if err != nil {
+			t.Errorf("expected no error for interface %q, got: %v", iface, err)
+		}
+	}
+}
+
+// === Fix 4: IP address and port validation ===
+
+func TestAnalyze_InvalidIPAddress(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Src: "garbage", Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid IP address")
+	}
+	if !strings.Contains(err.Error(), "not a valid IP address or CIDR") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_ValidCIDR(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Src: "10.0.0.0/8", Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid CIDR, got: %v", err)
+	}
+}
+
+func TestAnalyze_PortTooHigh(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", DPort: 70000, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for port 70000")
+	}
+	if !strings.Contains(err.Error(), "outside valid range") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_PortNegative(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", DPort: -1, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for port -1")
+	}
+	if !strings.Contains(err.Error(), "outside valid range") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_PortListWithBadValue(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", DPort: []interface{}{80, 99999}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for port list with 99999")
+	}
+	if !strings.Contains(err.Error(), "outside valid range") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestAnalyze_ValidPortList(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", DPort: []interface{}{80, 443, 8080}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid port list, got: %v", err)
+	}
+}
