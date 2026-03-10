@@ -38,7 +38,17 @@ chains:
       - { ... }
     mangle:                      # rules for the mangle table
       - { ... }
+    nat:                         # rules for the nat table
+      - { ... }
 ```
+
+Supported tables and their built-in chains:
+
+| Table | Built-in chains |
+|-------|----------------|
+| `filter` | `INPUT`, `FORWARD`, `OUTPUT` |
+| `mangle` | `PREROUTING`, `INPUT`, `FORWARD`, `OUTPUT`, `POSTROUTING` |
+| `nat` | `PREROUTING`, `INPUT`, `OUTPUT`, `POSTROUTING` |
 
 ### Rule fields
 
@@ -49,17 +59,20 @@ chains:
 | `s` / `s!` | Source address/ipset |
 | `d` / `d!` | Destination address/ipset |
 | `p` | Protocol (`tcp`, `udp`, `icmp`, `ipv6-icmp`); can be a list `[tcp, udp]` |
-| `sp` / `dp` | Source/destination port; single, list `[80, 443]`, or range `[1024:65535]` |
-| `sp!` / `dp!` | Negated port match |
+| `sp` / `sp!` | Source port; single, list `[80, 443]`, range `[1024:65535]`, or `$portset` |
+| `dp` / `dp!` | Destination port (same formats) |
 | `syn` | Match TCP SYN flag |
 | `icmp-type` | ICMP type (numeric, named string, or `$resource`) |
 | `icmpv6-type` | ICMPv6 type (numeric or `$resource`) |
-| `j` | Jump target (`accept`, `drop`, `return`, `reject`, `log`, `tproxy`, `mark`, or user chain) |
+| `j` | Jump target (`accept`, `drop`, `return`, `reject`, `log`, `tproxy`, `mark`, `masquerade`, `snat`, `dnat`, `redirect`, or user chain) |
 | `reject-with` | Rejection type (e.g., `tcp-reset`) when `j: reject` |
-| `log-prefix` | Log prefix string when `j: log` |
-| `comment` | Rule comment |
-| `set-mark` | Mark value for `j: mark` target |
+| `log-prefix` | Log prefix string (max 29 chars) when `j: log` |
+| `comment` | Rule comment (max 29 chars) |
+| `set-mark` | Mark value for `j: mark` |
 | `on-ip` / `on-port` / `tproxy-mark` | tproxy target parameters |
+| `to-source` | SNAT target address (with optional port) |
+| `to-destination` | DNAT target address (with optional port) |
+| `to-ports` | Port range for `masquerade`, `snat`, `dnat`, `redirect` |
 | `match` | Extended match modules (see below) |
 
 ### `match` sub-fields
@@ -84,6 +97,14 @@ match:
   socket: {}           # socket match (no options needed)
   addrtype:
     dst-type: BROADCAST|MULTICAST|ANYCAST|...
+  mac:
+    mac-source: "aa:bb:cc:dd:ee:ff"   # IPv4 only
+  time:
+    timestart: "08:00"
+    timestop: "18:00"
+    weekdays: "Mon,Tue,Wed,Thu,Fri"
+  state:               # legacy module; prefer conntrack
+    state: [ESTABLISHED, RELATED]
 ```
 
 Multiple match modules can be combined in a single `match` object.

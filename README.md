@@ -123,10 +123,20 @@ chains:
   PREROUTING:
     mangle:               # rules in the mangle table
       - { ... }
+    nat:                  # rules in the nat table
+      - { ... }
   MY_CHAIN:               # user-defined chains need no policy
     filter:
       - { ... }
 ```
+
+Supported tables and their built-in chains:
+
+| Table | Built-in chains |
+|-------|----------------|
+| `filter` | `INPUT`, `FORWARD`, `OUTPUT` |
+| `mangle` | `PREROUTING`, `INPUT`, `FORWARD`, `OUTPUT`, `POSTROUTING` |
+| `nat` | `PREROUTING`, `INPUT`, `OUTPUT`, `POSTROUTING` |
 
 ### Rule fields
 
@@ -181,6 +191,10 @@ When an `$icmp_typeset` or `$icmpv6_typeset` with N elements is referenced, the 
 | `log` | `LOG` | Combine with `log-prefix:` |
 | `mark` | `MARK` | Combine with `set-mark:` |
 | `tproxy` | `TPROXY` | Combine with `on-ip:`, `on-port:`, `tproxy-mark:` |
+| `masquerade` | `MASQUERADE` | Optionally combine with `to-ports:` |
+| `snat` | `SNAT` | Combine with `to-source:`; optionally `to-ports:` |
+| `dnat` | `DNAT` | Combine with `to-destination:`; optionally `to-ports:` |
+| `redirect` | `REDIRECT` | Optionally combine with `to-ports:` |
 | Any other string | Used as-is | Jump to user-defined chain |
 
 ```yaml
@@ -188,6 +202,9 @@ When an `$icmp_typeset` or `$icmpv6_typeset` with N elements is referenced, the 
 - {match: {limit: {limit: 1/second, limit-burst: 100}}, log-prefix: "iptables[DOS]: ", j: log}
 - {p: [udp, tcp], on-ip: 127.0.0.1, on-port: 12345, tproxy-mark: 1, j: tproxy}
 - {p: [udp, tcp], set-mark: 1, j: mark}
+- {o: eth0, j: masquerade}
+- {p: tcp, dp: 80, to-destination: 192.168.1.10:8080, j: dnat}
+- {s: 192.168.1.0/24, to-source: 203.0.113.1, j: snat}
 ```
 
 #### Match modules
@@ -219,6 +236,17 @@ match:
 
   addrtype:
     dst-type: BROADCAST   # MULTICAST, ANYCAST, etc.
+
+  mac:
+    mac-source: "aa:bb:cc:dd:ee:ff"
+
+  time:
+    timestart: "08:00"
+    timestop: "18:00"
+    weekdays: "Mon,Tue,Wed,Thu,Fri"
+
+  state:            # legacy state module (prefer conntrack)
+    state: [ESTABLISHED, RELATED]
 ```
 
 Multiple modules can be combined:
@@ -315,4 +343,4 @@ See [`rule_files/all_features.yaml`](rule_files/all_features.yaml) for a complet
 go test ./...
 ```
 
-The test suite covers all pipeline stages — parser, semantic analysis, IR expansion, code generation — plus an end-to-end integration test against `all_features.yaml`.
+The test suite covers all pipeline stages — parser, semantic analysis, IR expansion, code generation — plus end-to-end integration tests against `all_features.yaml` and `nat_example.yaml`.
