@@ -12,6 +12,7 @@ import (
 
 const allFeaturesYAML = "../../rule_files/all_features.yaml"
 const natExampleYAML = "../../rule_files/nat_example.yaml"
+const multiportSplitYAML = "../../rule_files/multiport_split.yaml"
 
 func buildOutput(t *testing.T) (iptables, ipset string) {
 	t.Helper()
@@ -144,5 +145,36 @@ func TestIntegration_NATRedirect(t *testing.T) {
 	ipt := buildNATOutput(t)
 	if !strings.Contains(ipt, "-j REDIRECT --to-ports 80") {
 		t.Errorf("expected -j REDIRECT --to-ports 80\\nOutput:\\n%s", ipt)
+	}
+}
+
+func buildMultiportSplitOutput(t *testing.T) string {
+	t.Helper()
+	doc, err := parser.ParseFile(multiportSplitYAML)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	resolved, err := sema.Analyze(doc)
+	if err != nil {
+		t.Fatalf("sema: %v", err)
+	}
+	prog, err := ir.Build(resolved)
+	if err != nil {
+		t.Fatalf("ir: %v", err)
+	}
+	return codegen.RenderIptablesRestore(prog)
+}
+
+func TestIntegration_MultiportSplit(t *testing.T) {
+	ipt := buildMultiportSplitOutput(t)
+	// 16 ports should produce 2 rules (15 + 1)
+	count := strings.Count(ipt, "-m multiport --dports")
+	if count != 2 {
+		t.Errorf("expected 2 multiport rules (split from 16 ports), got %d\nOutput:\n%s", count, ipt)
+	}
+	// Both rules should have the ACCEPT jump
+	acceptCount := strings.Count(ipt, "-j ACCEPT")
+	if acceptCount != 2 {
+		t.Errorf("expected 2 ACCEPT jumps, got %d\nOutput:\n%s", acceptCount, ipt)
 	}
 }

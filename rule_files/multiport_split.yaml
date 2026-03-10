@@ -1,0 +1,25 @@
+resources:
+  many_ports:
+    type: portset
+    elements:
+      - 80
+      - 443
+      - 8080
+      - 8443
+      - 3000
+      - 3001
+      - 3002
+      - 3003
+      - 3004
+      - 3005
+      - 3006
+      - 3007
+      - 3008
+      - 3009
+      - 3010
+      - 3011
+
+chains:
+  INPUT:
+    filter:
+      - { p: tcp, dp: $many_ports, j: accept }

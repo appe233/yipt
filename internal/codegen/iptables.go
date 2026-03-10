@@ -45,8 +45,10 @@ func RenderIptablesRestore(prog *ir.Program) string {
 		// Rules.
 		for _, chain := range t.Chains {
 			for _, rule := range chain.IRRules {
-				sb.WriteString(renderRule(rule))
-				sb.WriteString("\n")
+				for _, line := range renderRules(rule) {
+					sb.WriteString(line)
+					sb.WriteString("\n")
+				}
 			}
 		}
 
@@ -56,7 +58,67 @@ func RenderIptablesRestore(prog *ir.Program) string {
 	return sb.String()
 }
 
-func renderRule(r *ir.IRRule) string {
+// multiportLimit is the maximum number of port slots allowed per multiport rule.
+const multiportLimit = 15
+
+// multiportCost returns how many "slots" a port entry uses.
+// A range like "1024:65535" costs 2; a single port costs 1.
+func multiportCost(entry string) int {
+	if strings.Contains(entry, ":") {
+		return 2
+	}
+	return 1
+}
+
+// splitMultiportEntries splits a comma-separated port string into chunks,
+// each fitting within the iptables 15-port multiport limit.
+func splitMultiportEntries(ports string) []string {
+	entries := strings.Split(ports, ",")
+	var chunks []string
+	var current []string
+	cost := 0
+
+	for _, e := range entries {
+		c := multiportCost(e)
+		if len(current) > 0 && cost+c > multiportLimit {
+			chunks = append(chunks, strings.Join(current, ","))
+			current = current[:0]
+			cost = 0
+		}
+		current = append(current, e)
+		cost += c
+	}
+	if len(current) > 0 {
+		chunks = append(chunks, strings.Join(current, ","))
+	}
+	return chunks
+}
+
+// renderRules renders an IR rule into one or more iptables-restore lines.
+// Multiple lines are produced when multiport entries exceed the 15-port limit.
+func renderRules(r *ir.IRRule) []string {
+	// Determine sport/dport chunks for splitting.
+	sportChunks := []string{""}
+	dportChunks := []string{""}
+	if r.SPort != "" && r.SPortMulti {
+		sportChunks = splitMultiportEntries(r.SPort)
+	}
+	if r.DPort != "" && r.DPortMulti {
+		dportChunks = splitMultiportEntries(r.DPort)
+	}
+
+	var lines []string
+	for _, sp := range sportChunks {
+		for _, dp := range dportChunks {
+			lines = append(lines, renderRuleLine(r, sp, dp))
+		}
+	}
+	return lines
+}
+
+// renderRuleLine renders a single iptables-restore line with the given
+// sport/dport chunks. Empty string means use the original non-multi value.
+func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string) string {
 	var parts []string
 
 	// IP version prefix.
@@ -130,9 +192,9 @@ func renderRule(r *ir.IRRule) string {
 		if r.SPortMulti {
 			parts = append(parts, "-m", "multiport")
 			if r.SPortNeg {
-				parts = append(parts, "!", "--sports", r.SPort)
+				parts = append(parts, "!", "--sports", sportOverride)
 			} else {
-				parts = append(parts, "--sports", r.SPort)
+				parts = append(parts, "--sports", sportOverride)
 			}
 		} else {
 			if r.SPortNeg {
@@ -148,9 +210,9 @@ func renderRule(r *ir.IRRule) string {
 		if r.DPortMulti {
 			parts = append(parts, "-m", "multiport")
 			if r.DPortNeg {
-				parts = append(parts, "!", "--dports", r.DPort)
+				parts = append(parts, "!", "--dports", dportOverride)
 			} else {
-				parts = append(parts, "--dports", r.DPort)
+				parts = append(parts, "--dports", dportOverride)
 			}
 		} else {
 			if r.DPortNeg {
