@@ -36,23 +36,38 @@ go build ./cmd/yipt
 ## Usage
 
 ```
-yipt [--ipset-out FILE] input.yaml
+yipt [--format FORMAT] [--ipset-out FILE] input.yaml
 ```
 
-- Writes `iptables-restore` output to **stdout**.
-- With `--ipset-out FILE`: writes the `ipset` creation script to `FILE`. Without it, the ipset script is appended to stdout after the iptables output.
+- `--format`: Output format (required when ipsets are used):
+  - `iptables` — IPv4 rules only, no version prefix (pipe to `iptables-restore`)
+  - `ip6tables` — IPv6 rules only, no version prefix (pipe to `ip6tables-restore`)
+  - `ipset` — ipset commands only (pipe to `ipset restore`)
+  - `combined` — all rules with `-4`/`-6` prefixes, no ipsets (default when no ipsets exist)
+- `--ipset-out FILE`: (legacy) writes ipset script to FILE (ignored when `--format ipset` is used)
 - Warnings (e.g. unused resources) are printed to **stderr** and do not affect the generated output.
+
+Rules with unspecified IP version (`IPVersion=0`) appear in both `iptables` and `ip6tables` outputs.
 
 ### Applying the output
 
-```sh
-# Generate and apply in one step
-yipt --ipset-out /tmp/ipsets.sh firewall.yaml | iptables-restore
-bash /tmp/ipsets.sh
+When your configuration uses ipsets, you must specify `--format` and generate separate outputs:
 
-# Or capture and apply separately
-yipt firewall.yaml > rules.txt
-iptables-restore < rules.txt
+```sh
+# Create ipsets first
+yipt --format ipset firewall.yaml | ipset restore
+
+# Then apply IPv4 rules
+yipt --format iptables firewall.yaml | iptables-restore
+
+# Then apply IPv6 rules
+yipt --format ip6tables firewall.yaml | ip6tables-restore
+```
+
+For configurations without ipsets, the default combined format works:
+
+```sh
+yipt firewall.yaml | iptables-restore
 ```
 
 ## Configuration format

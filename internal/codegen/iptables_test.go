@@ -442,3 +442,149 @@ func TestRenderRules_NoSplitUnderLimit(t *testing.T) {
 		t.Errorf("expected original ports, got: %s", lines[0])
 	}
 }
+
+func TestFilterRulesByVersion(t *testing.T) {
+	rules := []*ir.IRRule{
+		{IPVersion: 4, Chain: "INPUT", Jump: "ACCEPT"},
+		{IPVersion: 6, Chain: "INPUT", Jump: "ACCEPT"},
+		{IPVersion: 0, Chain: "INPUT", Jump: "DROP"},
+	}
+
+	// Filter for IPv4 - should get v4 and v0
+	v4 := filterRulesByVersion(rules, 4)
+	if len(v4) != 2 {
+		t.Errorf("expected 2 rules for IPv4, got %d", len(v4))
+	}
+
+	// Filter for IPv6 - should get v6 and v0
+	v6 := filterRulesByVersion(rules, 6)
+	if len(v6) != 2 {
+		t.Errorf("expected 2 rules for IPv6, got %d", len(v6))
+	}
+
+	// Filter for all (version 0) - should get all 3
+	all := filterRulesByVersion(rules, 0)
+	if len(all) != 3 {
+		t.Errorf("expected 3 rules for version 0, got %d", len(all))
+	}
+}
+
+func TestRenderIptablesRestoreIPv4(t *testing.T) {
+	prog := &ir.Program{
+		Tables: map[string]*ir.Table{
+			"filter": {
+				Name: "filter",
+				Chains: []*ir.Chain{
+					{
+						Name:    "INPUT",
+						Policy:  "DROP",
+						BuiltIn: true,
+						IRRules: []*ir.IRRule{
+							{IPVersion: 4, Chain: "INPUT", Jump: "ACCEPT"},
+							{IPVersion: 6, Chain: "INPUT", Jump: "DROP"},
+							{IPVersion: 0, Chain: "INPUT", Proto: "tcp", DPort: "22", Jump: "ACCEPT"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	output := RenderIptablesRestoreIPv4(prog)
+
+	// Should contain IPv4 rule and version-0 rule, but not IPv6 rule
+	if !strings.Contains(output, "*filter") {
+		t.Error("expected *filter table")
+	}
+	if !strings.Contains(output, ":INPUT DROP") {
+		t.Error("expected INPUT policy")
+	}
+
+	// Count rules - should have 2 (v4 + v0)
+	ruleCount := strings.Count(output, "-A INPUT")
+	if ruleCount != 2 {
+		t.Errorf("expected 2 rules, got %d", ruleCount)
+	}
+
+	// Should NOT have -4 or -6 prefix
+	if strings.Contains(output, "-4 -A") {
+		t.Error("should not contain -4 prefix in IPv4-only output")
+	}
+	if strings.Contains(output, "-6 -A") {
+		t.Error("should not contain -6 prefix in IPv4-only output")
+	}
+}
+
+func TestRenderIptablesRestoreIPv6(t *testing.T) {
+	prog := &ir.Program{
+		Tables: map[string]*ir.Table{
+			"filter": {
+				Name: "filter",
+				Chains: []*ir.Chain{
+					{
+						Name:    "INPUT",
+						Policy:  "DROP",
+						BuiltIn: true,
+						IRRules: []*ir.IRRule{
+							{IPVersion: 4, Chain: "INPUT", Jump: "ACCEPT"},
+							{IPVersion: 6, Chain: "INPUT", Jump: "DROP"},
+							{IPVersion: 0, Chain: "INPUT", Proto: "tcp", DPort: "22", Jump: "ACCEPT"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	output := RenderIptablesRestoreIPv6(prog)
+
+	// Should contain IPv6 rule and version-0 rule, but not IPv4 rule
+	if !strings.Contains(output, "*filter") {
+		t.Error("expected *filter table")
+	}
+
+	// Count rules - should have 2 (v6 + v0)
+	ruleCount := strings.Count(output, "-A INPUT")
+	if ruleCount != 2 {
+		t.Errorf("expected 2 rules, got %d", ruleCount)
+	}
+
+	// Should NOT have -4 or -6 prefix
+	if strings.Contains(output, "-4 -A") {
+		t.Error("should not contain -4 prefix in IPv6-only output")
+	}
+	if strings.Contains(output, "-6 -A") {
+		t.Error("should not contain -6 prefix in IPv6-only output")
+	}
+}
+
+func TestRenderIptablesRestore_Combined(t *testing.T) {
+	prog := &ir.Program{
+		Tables: map[string]*ir.Table{
+			"filter": {
+				Name: "filter",
+				Chains: []*ir.Chain{
+					{
+						Name:    "INPUT",
+						Policy:  "ACCEPT",
+						BuiltIn: true,
+						IRRules: []*ir.IRRule{
+							{IPVersion: 4, Chain: "INPUT", Jump: "ACCEPT"},
+							{IPVersion: 6, Chain: "INPUT", Jump: "DROP"},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	output := RenderIptablesRestore(prog)
+
+	// Should have -4 and -6 prefixes in combined mode
+	if !strings.Contains(output, "-4 -A INPUT") {
+		t.Error("expected -4 prefix in combined output")
+	}
+	if !strings.Contains(output, "-6 -A INPUT") {
+		t.Error("expected -6 prefix in combined output")
+	}
+}

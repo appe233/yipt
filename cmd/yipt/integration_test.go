@@ -178,3 +178,110 @@ func TestIntegration_MultiportSplit(t *testing.T) {
 		t.Errorf("expected 2 ACCEPT jumps, got %d\nOutput:\n%s", acceptCount, ipt)
 	}
 }
+
+func TestIntegration_FormatIPv4Only(t *testing.T) {
+	doc, err := parser.ParseFile(allFeaturesYAML)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	resolved, err := sema.Analyze(doc)
+	if err != nil {
+		t.Fatalf("sema: %v", err)
+	}
+	prog, err := ir.Build(resolved)
+	if err != nil {
+		t.Fatalf("ir: %v", err)
+	}
+
+	output := codegen.RenderIptablesRestoreIPv4(prog)
+
+	// Should not have -4 or -6 prefixes
+	if strings.Contains(output, "-4 -A") {
+		t.Error("IPv4-only output should not contain -4 prefix")
+	}
+	if strings.Contains(output, "-6 -A") {
+		t.Error("IPv4-only output should not contain -6 prefix")
+	}
+
+	// Should contain IPv4-specific rules
+	if !strings.Contains(output, "*filter") {
+		t.Error("expected *filter table")
+	}
+}
+
+func TestIntegration_FormatIPv6Only(t *testing.T) {
+	doc, err := parser.ParseFile(allFeaturesYAML)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	resolved, err := sema.Analyze(doc)
+	if err != nil {
+		t.Fatalf("sema: %v", err)
+	}
+	prog, err := ir.Build(resolved)
+	if err != nil {
+		t.Fatalf("ir: %v", err)
+	}
+
+	output := codegen.RenderIptablesRestoreIPv6(prog)
+
+	// Should not have -4 or -6 prefixes
+	if strings.Contains(output, "-4 -A") {
+		t.Error("IPv6-only output should not contain -4 prefix")
+	}
+	if strings.Contains(output, "-6 -A") {
+		t.Error("IPv6-only output should not contain -6 prefix")
+	}
+
+	// Should contain IPv6-specific rules
+	if !strings.Contains(output, "*filter") {
+		t.Error("expected *filter table")
+	}
+}
+
+func TestIntegration_FormatCombined(t *testing.T) {
+	doc, err := parser.ParseFile(allFeaturesYAML)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	resolved, err := sema.Analyze(doc)
+	if err != nil {
+		t.Fatalf("sema: %v", err)
+	}
+	prog, err := ir.Build(resolved)
+	if err != nil {
+		t.Fatalf("ir: %v", err)
+	}
+
+	output := codegen.RenderIptablesRestore(prog)
+
+	// Should have -4 and -6 prefixes in combined mode
+	if !strings.Contains(output, "-4 -A") {
+		t.Error("combined output should contain -4 prefix")
+	}
+}
+
+func TestIntegration_FormatIpset(t *testing.T) {
+	doc, err := parser.ParseFile(allFeaturesYAML)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	resolved, err := sema.Analyze(doc)
+	if err != nil {
+		t.Fatalf("sema: %v", err)
+	}
+	prog, err := ir.Build(resolved)
+	if err != nil {
+		t.Fatalf("ir: %v", err)
+	}
+
+	output := codegen.RenderIpsetScript(prog)
+
+	// Should contain ipset commands
+	if !strings.Contains(output, "ipset create -exist") {
+		t.Error("expected ipset create commands")
+	}
+	if !strings.Contains(output, "ipset add") {
+		t.Error("expected ipset add commands")
+	}
+}

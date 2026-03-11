@@ -12,6 +12,38 @@ var tableOrder = []string{"filter", "nat", "mangle"}
 
 // RenderIptablesRestore renders the iptables-restore compatible output.
 func RenderIptablesRestore(prog *ir.Program) string {
+	return renderIptablesRestoreInternal(prog, 0, true)
+}
+
+// RenderIptablesRestoreIPv4 renders only IPv4 rules without version prefix.
+func RenderIptablesRestoreIPv4(prog *ir.Program) string {
+	return renderIptablesRestoreInternal(prog, 4, false)
+}
+
+// RenderIptablesRestoreIPv6 renders only IPv6 rules without version prefix.
+func RenderIptablesRestoreIPv6(prog *ir.Program) string {
+	return renderIptablesRestoreInternal(prog, 6, false)
+}
+
+// filterRulesByVersion filters rules by IP version.
+// version=0 means all rules, version=4 or 6 includes rules with that version or IPVersion=0.
+func filterRulesByVersion(rules []*ir.IRRule, version int) []*ir.IRRule {
+	if version == 0 {
+		return rules
+	}
+	var filtered []*ir.IRRule
+	for _, r := range rules {
+		if r.IPVersion == 0 || r.IPVersion == version {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+// renderIptablesRestoreInternal renders iptables-restore output with optional filtering.
+// version=0 means all rules, version=4 or 6 filters to that IP version.
+// includeVersionPrefix controls whether -4/-6 prefixes are included.
+func renderIptablesRestoreInternal(prog *ir.Program, version int, includeVersionPrefix bool) string {
 	var sb strings.Builder
 
 	for _, tableName := range tableOrder {
@@ -20,12 +52,25 @@ func RenderIptablesRestore(prog *ir.Program) string {
 			continue
 		}
 
+		// Filter chains to only those with rules matching the version.
+		var chainsWithRules []*ir.Chain
+		for _, chain := range t.Chains {
+			filtered := filterRulesByVersion(chain.IRRules, version)
+			if len(filtered) > 0 || chain.BuiltIn {
+				chainsWithRules = append(chainsWithRules, chain)
+			}
+		}
+
+		if len(chainsWithRules) == 0 {
+			continue
+		}
+
 		sb.WriteString("*")
 		sb.WriteString(tableName)
 		sb.WriteString("\n")
 
 		// Policy lines for built-in chains.
-		for _, chain := range t.Chains {
+		for _, chain := range chainsWithRules {
 			if chain.BuiltIn {
 				policy := chain.Policy
 				if policy == "" {
@@ -36,16 +81,17 @@ func RenderIptablesRestore(prog *ir.Program) string {
 		}
 
 		// -N declarations for user-defined chains.
-		for _, chain := range t.Chains {
+		for _, chain := range chainsWithRules {
 			if !chain.BuiltIn {
 				sb.WriteString(fmt.Sprintf("-N %s\n", chain.Name))
 			}
 		}
 
 		// Rules.
-		for _, chain := range t.Chains {
-			for _, rule := range chain.IRRules {
-				for _, line := range renderRules(rule) {
+		for _, chain := range chainsWithRules {
+			filtered := filterRulesByVersion(chain.IRRules, version)
+			for _, rule := range filtered {
+				for _, line := range renderRulesWithPrefix(rule, includeVersionPrefix) {
 					sb.WriteString(line)
 					sb.WriteString("\n")
 				}
@@ -97,6 +143,11 @@ func splitMultiportEntries(ports string) []string {
 // renderRules renders an IR rule into one or more iptables-restore lines.
 // Multiple lines are produced when multiport entries exceed the 15-port limit.
 func renderRules(r *ir.IRRule) []string {
+	return renderRulesWithPrefix(r, true)
+}
+
+// renderRulesWithPrefix renders an IR rule with optional version prefix.
+func renderRulesWithPrefix(r *ir.IRRule, includeVersionPrefix bool) []string {
 	// Determine sport/dport chunks for splitting.
 	sportChunks := []string{""}
 	dportChunks := []string{""}
@@ -110,7 +161,7 @@ func renderRules(r *ir.IRRule) []string {
 	var lines []string
 	for _, sp := range sportChunks {
 		for _, dp := range dportChunks {
-			lines = append(lines, renderRuleLine(r, sp, dp))
+			lines = append(lines, renderRuleLine(r, sp, dp, includeVersionPrefix))
 		}
 	}
 	return lines
@@ -118,15 +169,18 @@ func renderRules(r *ir.IRRule) []string {
 
 // renderRuleLine renders a single iptables-restore line with the given
 // sport/dport chunks. Empty string means use the original non-multi value.
-func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string) string {
+// If includeVersionPrefix is false, the -4/-6 prefix is omitted.
+func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string, includeVersionPrefix bool) string {
 	var parts []string
 
 	// IP version prefix.
-	switch r.IPVersion {
-	case 4:
-		parts = append(parts, "-4")
-	case 6:
-		parts = append(parts, "-6")
+	if includeVersionPrefix {
+		switch r.IPVersion {
+		case 4:
+			parts = append(parts, "-4")
+		case 6:
+			parts = append(parts, "-6")
+		}
 	}
 
 	// Chain.
