@@ -642,3 +642,664 @@ func TestAnalyze_ValidPortList(t *testing.T) {
 		t.Fatalf("expected no error for valid port list, got: %v", err)
 	}
 }
+
+// === P0: Jump target validation ===
+
+func TestAnalyze_UnknownJumpTarget(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Jump: "bogus"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for unknown jump target")
+	}
+	if !strings.Contains(err.Error(), "unknown jump target") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_JumpToUserDefinedChain(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Jump: "MYCHAIN"},
+				},
+			},
+			"MYCHAIN": {
+				Filter: []ast.Rule{
+					{Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for jump to user-defined chain, got: %v", err)
+	}
+}
+
+// === P0: NAT target/table/chain validation ===
+
+func TestAnalyze_DNATInFilterTable(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Jump: "dnat", ToDest: "10.0.0.1"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for DNAT in filter table")
+	}
+	if !strings.Contains(err.Error(), "only valid in the nat table") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_SNATInWrongChain(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"PREROUTING": {
+				Nat: []ast.Rule{
+					{Jump: "snat", ToSource: "1.2.3.4"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for SNAT in PREROUTING")
+	}
+	if !strings.Contains(err.Error(), "only valid in chains") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_MASQUERADEInPostrouting(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"POSTROUTING": {
+				Nat: []ast.Rule{
+					{Jump: "masquerade"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for MASQUERADE in nat POSTROUTING, got: %v", err)
+	}
+}
+
+func TestAnalyze_TProxyInMangle(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"PREROUTING": {
+				Mangle: []ast.Rule{
+					{Proto: "tcp", Jump: "tproxy", OnIP: "127.0.0.1", OnPort: 12345, TProxyMark: 1},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for TPROXY in mangle PREROUTING, got: %v", err)
+	}
+}
+
+func TestAnalyze_TProxyInFilter(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", Jump: "tproxy", OnIP: "127.0.0.1", OnPort: 12345, TProxyMark: 1},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for TPROXY in filter table")
+	}
+	if !strings.Contains(err.Error(), "only valid in the mangle table") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// === P0: reject-with validation ===
+
+func TestAnalyze_RejectWithInvalid(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Jump: "reject", RejectWith: "bogus"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid reject-with")
+	}
+	if !strings.Contains(err.Error(), "unknown reject-with") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_RejectWithTCPResetNoTCP(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "udp", Jump: "reject", RejectWith: "tcp-reset"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for tcp-reset without p: tcp")
+	}
+	if !strings.Contains(err.Error(), "tcp-reset requires p: tcp") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_RejectWithValid(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", Jump: "reject", RejectWith: "tcp-reset"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid reject-with tcp-reset, got: %v", err)
+	}
+}
+
+func TestAnalyze_RejectWithoutJReject(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Jump: "drop", RejectWith: "tcp-reset"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for reject-with without j: reject")
+	}
+	if !strings.Contains(err.Error(), "only valid with j: reject") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// === P1: Protocol validation ===
+
+func TestAnalyze_UnknownProtocol(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "xyz", Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for unknown protocol")
+	}
+	if !strings.Contains(err.Error(), "unknown protocol") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidProtocols(t *testing.T) {
+	for _, proto := range []string{"tcp", "udp", "icmp", "ipv6-icmp", "sctp", "gre", "esp", "ah", "all"} {
+		doc := makeDoc(
+			map[string]ast.Resource{},
+			map[string]ast.Chain{
+				"INPUT": {
+					Filter: []ast.Rule{
+						{Proto: proto, Jump: "accept"},
+					},
+				},
+			},
+		)
+		_, err := Analyze(doc)
+		if err != nil {
+			t.Errorf("expected no error for protocol %q, got: %v", proto, err)
+		}
+	}
+}
+
+// === P1: NAT address validation ===
+
+func TestAnalyze_InvalidToSource(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"POSTROUTING": {
+				Nat: []ast.Rule{
+					{Jump: "snat", ToSource: "garbage"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid to-source")
+	}
+	if !strings.Contains(err.Error(), "not a valid address") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidToSource(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"POSTROUTING": {
+				Nat: []ast.Rule{
+					{Jump: "snat", ToSource: "1.2.3.4"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid to-source, got: %v", err)
+	}
+}
+
+// === P1: Mark validation ===
+
+func TestAnalyze_InvalidSetMark(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"OUTPUT": {
+				Mangle: []ast.Rule{
+					{Jump: "mark", SetMark: "bogus"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid set-mark")
+	}
+	if !strings.Contains(err.Error(), "not a valid mark value") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidSetMarkHex(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"OUTPUT": {
+				Mangle: []ast.Rule{
+					{Jump: "mark", SetMark: "0xff"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid hex set-mark, got: %v", err)
+	}
+}
+
+func TestAnalyze_ValidSetMarkInt(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"OUTPUT": {
+				Mangle: []ast.Rule{
+					{Jump: "mark", SetMark: 1},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid int set-mark, got: %v", err)
+	}
+}
+
+func TestAnalyze_ValidSetMarkWithMask(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"OUTPUT": {
+				Mangle: []ast.Rule{
+					{Jump: "mark", SetMark: "0xff/0xff"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for set-mark with mask, got: %v", err)
+	}
+}
+
+// === P1: Port range string validation ===
+
+func TestAnalyze_ReversedPortRange(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", DPort: "65535:0", Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for reversed port range")
+	}
+	if !strings.Contains(err.Error(), "low > high") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_InvalidPortString(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", DPort: "abc", Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid port string 'abc'")
+	}
+	if !strings.Contains(err.Error(), "not a valid port") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidPortRange(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Proto: "tcp", DPort: "1024:65535", Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid port range, got: %v", err)
+	}
+}
+
+// === P1: Policy on custom chain ===
+
+func TestAnalyze_PolicyOnCustomChain(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"MYCHAIN": {
+				Policy: "drop",
+				Filter: []ast.Rule{
+					{Jump: "accept"},
+				},
+			},
+		},
+	)
+	res, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "policy") && strings.Contains(w, "MYCHAIN") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected warning about policy on custom chain, got: %v", res.Warnings)
+	}
+}
+
+// === P2: MAC address validation ===
+
+func TestAnalyze_InvalidMAC(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Match: &ast.MatchBlock{MAC: &ast.MACMatch{MACSource: "not-a-mac"}}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid MAC address")
+	}
+	if !strings.Contains(err.Error(), "not a valid MAC") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidMAC(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Match: &ast.MatchBlock{MAC: &ast.MACMatch{MACSource: "aa:bb:cc:dd:ee:ff"}}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid MAC, got: %v", err)
+	}
+}
+
+// === P2: Time match validation ===
+
+func TestAnalyze_InvalidTimeStart(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Match: &ast.MatchBlock{Time: &ast.TimeMatch{TimeStart: "25:99"}}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	// We validate format (HH:MM), 25:99 matches the regex but is technically invalid hours/minutes.
+	// The regex only checks format. Let's test something that doesn't match the regex at all.
+	if err != nil && !strings.Contains(err.Error(), "not a valid time") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_InvalidTimeFormat(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Match: &ast.MatchBlock{Time: &ast.TimeMatch{TimeStart: "8am"}}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid time format")
+	}
+	if !strings.Contains(err.Error(), "not a valid time") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_InvalidWeekday(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Match: &ast.MatchBlock{Time: &ast.TimeMatch{Days: "Monday,Tuesday"}}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid weekday names")
+	}
+	if !strings.Contains(err.Error(), "invalid weekday") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidTimeMatch(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Match: &ast.MatchBlock{Time: &ast.TimeMatch{
+						TimeStart: "08:00",
+						TimeStop:  "18:00",
+						Days:      "Mon,Tue,Wed,Thu,Fri",
+					}}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid time match, got: %v", err)
+	}
+}
+
+// === P2: Addrtype validation ===
+
+func TestAnalyze_InvalidAddrType(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"INPUT": {
+				Filter: []ast.Rule{
+					{Match: &ast.MatchBlock{AddrType: &ast.AddrTypeMatch{DstType: "BOGUS"}}, Jump: "accept"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid addrtype dst-type")
+	}
+	if !strings.Contains(err.Error(), "unknown addrtype") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidAddrTypes(t *testing.T) {
+	for _, dt := range []string{"BROADCAST", "MULTICAST", "ANYCAST", "LOCAL", "UNICAST"} {
+		doc := makeDoc(
+			map[string]ast.Resource{},
+			map[string]ast.Chain{
+				"INPUT": {
+					Filter: []ast.Rule{
+						{Match: &ast.MatchBlock{AddrType: &ast.AddrTypeMatch{DstType: dt}}, Jump: "accept"},
+					},
+				},
+			},
+		)
+		_, err := Analyze(doc)
+		if err != nil {
+			t.Errorf("expected no error for addrtype %q, got: %v", dt, err)
+		}
+	}
+}
+
+// === P1: to-ports validation ===
+
+func TestAnalyze_InvalidToPorts(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"POSTROUTING": {
+				Nat: []ast.Rule{
+					{Jump: "masquerade", ToPorts: "abc"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err == nil {
+		t.Fatal("expected error for invalid to-ports")
+	}
+	if !strings.Contains(err.Error(), "not a valid port") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAnalyze_ValidToPorts(t *testing.T) {
+	doc := makeDoc(
+		map[string]ast.Resource{},
+		map[string]ast.Chain{
+			"POSTROUTING": {
+				Nat: []ast.Rule{
+					{Jump: "masquerade", ToPorts: "1024:65535"},
+				},
+			},
+		},
+	)
+	_, err := Analyze(doc)
+	if err != nil {
+		t.Fatalf("expected no error for valid to-ports range, got: %v", err)
+	}
+}

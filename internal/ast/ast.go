@@ -1,6 +1,10 @@
 package ast
 
-import "gopkg.in/yaml.v3"
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
 
 // Document is the top-level YAML structure.
 type Document struct {
@@ -167,6 +171,8 @@ func (r *Rule) UnmarshalYAML(value *yaml.Node) error {
 				return err
 			}
 			r.Match = mb
+		default:
+			return fmt.Errorf("unknown rule field %q", key)
 		}
 	}
 	return nil
