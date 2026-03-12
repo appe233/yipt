@@ -22,13 +22,13 @@ YAML file → Parser → Semantic Analysis → IR → Code Generation → output
 ## Installation
 
 ```sh
-go install yipt/cmd/yipt@latest
+go install github.com/appe233/yipt/cmd/yipt@latest
 ```
 
 Or build from source:
 
 ```sh
-git clone <repo>
+git clone https://github.com/appe233/yipt.git
 cd yipt.go
 go build ./cmd/yipt
 ```
