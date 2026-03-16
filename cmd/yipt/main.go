@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"yipt/internal/codegen"
-	"yipt/internal/ir"
-	"yipt/internal/parser"
-	"yipt/internal/sema"
+	"github.com/appe233/yipt/internal/codegen"
+	"github.com/appe233/yipt/internal/ir"
+	"github.com/appe233/yipt/internal/parser"
+	"github.com/appe233/yipt/internal/sema"
 )
 
 func main() {

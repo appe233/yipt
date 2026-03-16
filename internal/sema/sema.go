@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"yipt/internal/ast"
+	"github.com/appe233/yipt/internal/ast"
 )
 
 var validIfaceRe = regexp.MustCompile(`^[a-zA-Z0-9\-\.+]+$`)

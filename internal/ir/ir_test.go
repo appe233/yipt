@@ -3,8 +3,8 @@ package ir
 import (
 	"testing"
 
-	"yipt/internal/ast"
-	"yipt/internal/sema"
+	"github.com/appe233/yipt/internal/ast"
+	"github.com/appe233/yipt/internal/sema"
 )
 
 func makeResources(t *testing.T) map[string]*sema.ResolvedResource {

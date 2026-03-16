@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"yipt/internal/ast"
+	"github.com/appe233/yipt/internal/ast"
 )
 
 func makeDoc(resources map[string]ast.Resource, chains map[string]ast.Chain) *ast.Document {

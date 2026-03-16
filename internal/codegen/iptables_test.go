@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"yipt/internal/ir"
+	"github.com/appe233/yipt/internal/ir"
 )
 
 func TestRenderRule_AcceptIPv4(t *testing.T) {

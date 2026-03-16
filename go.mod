@@ -1,4 +1,4 @@
-module yipt
+module github.com/appe233/yipt
 
 go 1.22
 

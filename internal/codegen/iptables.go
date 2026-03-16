@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"yipt/internal/ir"
+	"github.com/appe233/yipt/internal/ir"
 )
 
 // tableOrder defines which tables to emit and in what order.

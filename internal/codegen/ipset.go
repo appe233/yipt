@@ -3,7 +3,7 @@ package codegen
 import (
 	"strings"
 
-	"yipt/internal/ir"
+	"github.com/appe233/yipt/internal/ir"
 )
 
 // RenderIpsetScript renders shell commands to create and populate ipsets.

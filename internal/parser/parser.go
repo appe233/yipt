@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"gopkg.in/yaml.v3"
-	"yipt/internal/ast"
+	"github.com/appe233/yipt/internal/ast"
 )
 
 // ParseFile reads a YAML file and returns the parsed Document.

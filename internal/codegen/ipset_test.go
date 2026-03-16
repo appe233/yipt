@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"yipt/internal/ir"
+	"github.com/appe233/yipt/internal/ir"
 )
 
 func TestRenderIpsetScript_IPv4Only(t *testing.T) {

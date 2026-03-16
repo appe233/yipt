@@ -1,6 +1,6 @@
 package codegen
 
-import "yipt/internal/ir"
+import "github.com/appe233/yipt/internal/ir"
 
 // Backend renders a compiled Program into output text.
 type Backend interface {

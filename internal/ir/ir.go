@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"yipt/internal/ast"
-	"yipt/internal/sema"
+	"github.com/appe233/yipt/internal/ast"
+	"github.com/appe233/yipt/internal/sema"
 )
 
 // Program holds all the compiled data ready for code generation.
