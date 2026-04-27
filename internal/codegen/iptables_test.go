@@ -158,10 +158,10 @@ func TestRenderRule_Comment(t *testing.T) {
 
 func TestRenderRule_NegatedInterface(t *testing.T) {
 	r := &ir.IRRule{
-		Chain:  "INPUT",
-		In:     "lo",
-		InNeg:  true,
-		Jump:   "DROP",
+		Chain: "INPUT",
+		In:    "lo",
+		InNeg: true,
+		Jump:  "DROP",
 	}
 	got := renderRules(r)[0]
 	if !strings.Contains(got, "! -i lo") {
@@ -400,7 +400,8 @@ func TestRenderRules_SplitDPort(t *testing.T) {
 }
 
 func TestRenderRules_CartesianProduct(t *testing.T) {
-	// Both SPort and DPort exceed limit → cartesian product
+	// xt_multiport cannot combine --sports and --dports in one rule, so both
+	// sides are expanded to plain per-entry port matches.
 	r := &ir.IRRule{
 		Chain:      "FORWARD",
 		Proto:      "tcp",
@@ -411,17 +412,38 @@ func TestRenderRules_CartesianProduct(t *testing.T) {
 		Jump:       "ACCEPT",
 	}
 	lines := renderRules(r)
-	// 2 sport chunks × 2 dport chunks = 4 lines
-	if len(lines) != 4 {
-		t.Fatalf("expected 4 lines (cartesian product), got %d", len(lines))
+	if len(lines) != 256 {
+		t.Fatalf("expected 256 plain cartesian lines, got %d", len(lines))
 	}
-	// Verify each line has both --sports and --dports
 	for i, l := range lines {
-		if !strings.Contains(l, "--sports") {
-			t.Errorf("line %d missing --sports: %s", i, l)
+		if strings.Contains(l, "-m multiport") {
+			t.Errorf("line %d unexpectedly uses multiport: %s", i, l)
 		}
-		if !strings.Contains(l, "--dports") {
-			t.Errorf("line %d missing --dports: %s", i, l)
+		if !strings.Contains(l, "--sport") || !strings.Contains(l, "--dport") {
+			t.Errorf("line %d missing plain sport/dport: %s", i, l)
+		}
+	}
+}
+
+func TestRenderRules_MultiSportWithSingleDPortExpandsPlain(t *testing.T) {
+	r := &ir.IRRule{
+		Chain:      "INPUT",
+		Proto:      "tcp",
+		SPort:      "5554,5555,5556:5560",
+		SPortMulti: true,
+		DPort:      "5555",
+		Jump:       "DROP",
+	}
+	lines := renderRules(r)
+	if len(lines) != 3 {
+		t.Fatalf("expected 3 lines, got %d", len(lines))
+	}
+	for i, l := range lines {
+		if strings.Contains(l, "-m multiport") || strings.Contains(l, "--sports") {
+			t.Errorf("line %d should use plain --sport with --dport: %s", i, l)
+		}
+		if !strings.Contains(l, "--sport") || !strings.Contains(l, "--dport 5555") {
+			t.Errorf("line %d missing plain ports: %s", i, l)
 		}
 	}
 }
@@ -1172,7 +1194,7 @@ func TestRenderRule_RATEEST(t *testing.T) {
 		RateestName: "eth0", RateestInterval: 250, RateestEwmalog: 2,
 	}
 	got := renderRules(r)[0]
-	if !strings.Contains(got, "-j RATEEST --rateest-name eth0 --rateest-interval 250 --rateest-ewmalog 2") {
+	if !strings.Contains(got, "-j RATEEST --rateest-name eth0 --rateest-interval 250ms --rateest-ewmalog 2s") {
 		t.Errorf("got: %s", got)
 	}
 }

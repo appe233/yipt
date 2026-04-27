@@ -33,10 +33,10 @@ type Table struct {
 
 // Chain holds the policy and compiled rules for one chain.
 type Chain struct {
-	Name      string
-	Policy    string // "ACCEPT", "DROP", or "" for user-defined chains
-	BuiltIn   bool
-	IRRules   []*IRRule
+	Name    string
+	Policy  string // "ACCEPT", "DROP", or "" for user-defined chains
+	BuiltIn bool
+	IRRules []*IRRule
 }
 
 // IRRule is a fully expanded, atomic iptables rule.
@@ -46,12 +46,18 @@ type IRRule struct {
 	Comment   string
 
 	// Interface matches
-	In     string; InNeg  bool
-	Out    string; OutNeg bool
+	In     string
+	InNeg  bool
+	Out    string
+	OutNeg bool
 
 	// Address matches
-	Src    string; SrcNeg bool; SrcIsSet bool   // SrcIsSet → use -m set
-	Dst    string; DstNeg bool; DstIsSet bool
+	Src      string
+	SrcNeg   bool
+	SrcIsSet bool // SrcIsSet → use -m set
+	Dst      string
+	DstNeg   bool
+	DstIsSet bool
 	// Direction flag lists for multi-dim ipset references ("src", "dst", "src,dst", ...).
 	// Empty string means "use the default direction for the field (src for s:, dst for d:)".
 	SrcSetDir string
@@ -61,8 +67,12 @@ type IRRule struct {
 	Proto string
 
 	// Port matches
-	SPort    string; SPortNeg bool; SPortMulti bool
-	DPort    string; DPortNeg bool; DPortMulti bool
+	SPort      string
+	SPortNeg   bool
+	SPortMulti bool
+	DPort      string
+	DPortNeg   bool
+	DPortMulti bool
 
 	// Flags
 	Syn bool
@@ -638,6 +648,7 @@ func expandRule(chainName string, rule ast.Rule, resources map[string]*sema.Reso
 		case "ecn":
 			b.Jump = "ECN"
 			b.ECNTCPRemove = rule.ECNTCPRemove
+			b.IPVersion = mergeVersion(b.IPVersion, 4)
 		case "ttl":
 			b.Jump = "TTL"
 			b.TTLSet = rule.TTLSet
@@ -1166,11 +1177,11 @@ func buildMatchFragments(mb *ast.MatchBlock) ([]string, int, error) {
 		if a.DstType != "" {
 			parts = append(parts, "--dst-type", strings.ToUpper(a.DstType))
 		}
-		if a.LimitIfaceIn != "" {
-			parts = append(parts, "--limit-iface-in", a.LimitIfaceIn)
+		if a.LimitIfaceIn {
+			parts = append(parts, "--limit-iface-in")
 		}
-		if a.LimitIfaceOut != "" {
-			parts = append(parts, "--limit-iface-out", a.LimitIfaceOut)
+		if a.LimitIfaceOut {
+			parts = append(parts, "--limit-iface-out")
 		}
 		frags = append(frags, strings.Join(parts, " "))
 		ipv = mergeVersion(ipv, 4) // addrtype is IPv4-only
@@ -1365,6 +1376,7 @@ func buildMatchFragments(mb *ast.MatchBlock) ([]string, int, error) {
 		}
 		parts = append(parts, "--realm", fmt.Sprintf("%v", mb.Realm.Realm))
 		frags = append(frags, strings.Join(parts, " "))
+		ipv = mergeVersion(ipv, 4)
 	}
 
 	if mb.Cluster != nil {
@@ -1538,9 +1550,11 @@ func buildMatchFragments(mb *ast.MatchBlock) ([]string, int, error) {
 			}
 			if e.TunnelSrc != "" {
 				parts = append(parts, "--tunnel-src", e.TunnelSrc)
+				ipv = mergeVersion(ipv, int(sema.ClassifyAddr(e.TunnelSrc)))
 			}
 			if e.TunnelDst != "" {
 				parts = append(parts, "--tunnel-dst", e.TunnelDst)
+				ipv = mergeVersion(ipv, int(sema.ClassifyAddr(e.TunnelDst)))
 			}
 		}
 		frags = append(frags, strings.Join(parts, " "))

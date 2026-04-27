@@ -319,7 +319,7 @@ match:
   addrtype:
     src-type: LOCAL
     dst-type: BROADCAST   # MULTICAST, ANYCAST, etc.
-    limit-iface-in: eth0
+    limit-iface-in: true
 
   mac:
     mac-source: "aa:bb:cc:dd:ee:ff"
@@ -403,7 +403,7 @@ match:
     connbytes-mode: bytes
 
   connlabel:
-    label: web
+    label: 10
     set: true
 
   nfacct:
@@ -537,8 +537,8 @@ The ipset script:
 
 ```sh
 ipset create -exist trusted_networks hash:net family inet
-ipset add trusted_networks 192.168.1.0/24
-ipset add trusted_networks 10.0.0.0/24
+ipset add -exist trusted_networks 192.168.1.0/24
+ipset add -exist trusted_networks 10.0.0.0/24
 ```
 
 ## Reference

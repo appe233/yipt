@@ -3404,10 +3404,10 @@ func TestAnalyze_BitmapPortRange(t *testing.T) {
 	doc := makeDoc(
 		map[string]ast.Resource{
 			"hp": {
-				Type:     "ipset",
-				SetType:  "bitmap:port",
+				Type:       "ipset",
+				SetType:    "bitmap:port",
 				SetOptions: &ast.SetOptions{Range: "32768-65535"},
-				Elements: []interface{}{"32768-40000", "40001"},
+				Elements:   []interface{}{"32768-40000", "40001"},
 			},
 		},
 		map[string]ast.Chain{"INPUT": {Filter: []ast.Rule{{Src: "$hp[src]", Jump: "accept"}}}},
@@ -3555,11 +3555,11 @@ func TestAnalyze_BitmapPortInvalidElement(t *testing.T) {
 
 func TestParseSetRef(t *testing.T) {
 	cases := []struct {
-		in          string
-		wantName    string
-		wantDirs    []string
-		wantOK      bool
-		wantErr     bool
+		in       string
+		wantName string
+		wantDirs []string
+		wantOK   bool
+		wantErr  bool
 	}{
 		{"10.0.0.0/8", "", nil, false, false},
 		{"$nets", "nets", nil, true, false},
@@ -3661,9 +3661,9 @@ func TestAnalyze_ConntrackInvalidDir(t *testing.T) {
 
 func TestAnalyze_ConntrackExpireRange(t *testing.T) {
 	cases := []struct {
-		expire   string
-		wantErr  bool
-		errFrag  string
+		expire  string
+		wantErr bool
+		errFrag string
 	}{
 		{"60", false, ""},
 		{"60:3600", false, ""},
@@ -3749,7 +3749,7 @@ func TestAnalyze_AddrTypeSrcType(t *testing.T) {
 func TestAnalyze_AddrTypeLimitIfaceMutex(t *testing.T) {
 	doc := makeDoc(nil, map[string]ast.Chain{
 		"INPUT": {Filter: []ast.Rule{matchRule(&ast.MatchBlock{
-			AddrType: &ast.AddrTypeMatch{LimitIfaceIn: "eth0", LimitIfaceOut: "eth1"},
+			AddrType: &ast.AddrTypeMatch{LimitIfaceIn: true, LimitIfaceOut: true},
 		}, "accept")}},
 	})
 	_, err := Analyze(doc)

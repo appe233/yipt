@@ -150,6 +150,32 @@ func renderRules(r *ir.IRRule) []string {
 
 // renderRulesWithPrefix renders an IR rule with optional version prefix.
 func renderRulesWithPrefix(r *ir.IRRule, includeVersionPrefix bool) []string {
+	// xt_multiport cannot be combined with a normal source/destination port
+	// match in the same rule. When both sides are constrained and either side
+	// is multi, expand the multi side(s) into plain per-entry rules.
+	if (r.SPortMulti && r.DPort != "") || (r.DPortMulti && r.SPort != "") {
+		sports := []string{r.SPort}
+		dports := []string{r.DPort}
+		if r.SPortMulti {
+			sports = strings.Split(r.SPort, ",")
+		}
+		if r.DPortMulti {
+			dports = strings.Split(r.DPort, ",")
+		}
+		var lines []string
+		for _, sp := range sports {
+			for _, dp := range dports {
+				rr := *r
+				rr.SPort = sp
+				rr.SPortMulti = false
+				rr.DPort = dp
+				rr.DPortMulti = false
+				lines = append(lines, renderRuleLine(&rr, "", "", includeVersionPrefix))
+			}
+		}
+		return lines
+	}
+
 	// Determine sport/dport chunks for splitting.
 	sportChunks := []string{""}
 	dportChunks := []string{""}
@@ -593,10 +619,10 @@ func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string, includeVe
 	case "RATEEST":
 		rArgs := []string{"-j", "RATEEST", "--rateest-name", r.RateestName}
 		if r.RateestInterval != 0 {
-			rArgs = append(rArgs, "--rateest-interval", fmt.Sprintf("%d", r.RateestInterval))
+			rArgs = append(rArgs, "--rateest-interval", fmt.Sprintf("%dms", r.RateestInterval))
 		}
 		if r.RateestEwmalog != 0 {
-			rArgs = append(rArgs, "--rateest-ewmalog", fmt.Sprintf("%d", r.RateestEwmalog))
+			rArgs = append(rArgs, "--rateest-ewmalog", fmt.Sprintf("%ds", r.RateestEwmalog))
 		}
 		parts = append(parts, rArgs...)
 	case "LED":

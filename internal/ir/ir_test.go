@@ -40,12 +40,12 @@ func makeResources(t *testing.T) map[string]*sema.ResolvedResource {
 			IPv4Elements: []string{"10.0.0.1,tcp:22"},
 		},
 		"macs": {
-			Name:       "macs",
-			Type:       "ipset",
-			SetType:    "hash:mac",
-			Dimensions: 1,
-			HasAddress: false,
-			Family:     "inet",
+			Name:         "macs",
+			Type:         "ipset",
+			SetType:      "hash:mac",
+			Dimensions:   1,
+			HasAddress:   false,
+			Family:       "inet",
 			IPv4Elements: []string{"02:00:00:00:00:01"},
 		},
 		"myports": {
@@ -950,7 +950,7 @@ func TestBuildMatchFragments_AddrTypeSrcAndLimitIface(t *testing.T) {
 		AddrType: &ast.AddrTypeMatch{
 			SrcType:      "LOCAL",
 			DstType:      "UNICAST",
-			LimitIfaceIn: "eth0",
+			LimitIfaceIn: true,
 		},
 	}
 	frags, ipv, err := buildMatchFragments(mb)
@@ -960,7 +960,7 @@ func TestBuildMatchFragments_AddrTypeSrcAndLimitIface(t *testing.T) {
 	if ipv != 4 {
 		t.Errorf("expected ipv=4 (addrtype), got %d", ipv)
 	}
-	want := "-m addrtype --src-type LOCAL --dst-type UNICAST --limit-iface-in eth0"
+	want := "-m addrtype --src-type LOCAL --dst-type UNICAST --limit-iface-in"
 	if frags[0] != want {
 		t.Errorf("fragment\n  got:  %q\n  want: %q", frags[0], want)
 	}
@@ -1099,6 +1099,24 @@ func TestExpandRule_HLTargetForcesIPv6(t *testing.T) {
 	}
 }
 
+func TestExpandRule_ECNTargetForcesIPv4(t *testing.T) {
+	resources := makeResources(t)
+	rule := ast.Rule{Jump: "ecn", ECNTCPRemove: true}
+	rules, err := expandRule("PREROUTING", rule, resources)
+	if err != nil {
+		t.Fatalf("expandRule: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
+	if rules[0].IPVersion != 4 {
+		t.Errorf("ECN target must force IPv4, got IPVersion=%d", rules[0].IPVersion)
+	}
+	if rules[0].Jump != "ECN" {
+		t.Errorf("Jump = %q, want ECN", rules[0].Jump)
+	}
+}
+
 func TestExpandRule_NETMAPClassifiesFromCIDR(t *testing.T) {
 	resources := makeResources(t)
 	rule := ast.Rule{Jump: "netmap", NetmapTo: "192.168.100.0/24"}
@@ -1216,12 +1234,15 @@ func TestBuildMatchFragments_Helper(t *testing.T) {
 
 func TestBuildMatchFragments_Realm(t *testing.T) {
 	mb := &ast.MatchBlock{Realm: &ast.RealmMatch{Realm: "0x10/0xff"}}
-	frags, _, err := buildMatchFragments(mb)
+	frags, ipv, err := buildMatchFragments(mb)
 	if err != nil {
 		t.Fatalf("buildMatchFragments: %v", err)
 	}
 	if frags[0] != "-m realm --realm 0x10/0xff" {
 		t.Errorf("got: %q", frags[0])
+	}
+	if ipv != 4 {
+		t.Fatalf("expected realm to force ipv=4, got %d", ipv)
 	}
 }
 
@@ -1313,6 +1334,25 @@ func TestBuildMatchFragments_Policy(t *testing.T) {
 		!strings.Contains(frags[0], "--proto esp --mode tunnel") ||
 		!strings.Contains(frags[0], "--next --reqid 7") {
 		t.Errorf("got: %q", frags[0])
+	}
+}
+
+func TestBuildMatchFragments_PolicyTunnelForcesIPv6(t *testing.T) {
+	mb := &ast.MatchBlock{Policy: &ast.PolicyMatch{
+		Dir: "in", Policy: "ipsec",
+		Elements: []ast.PolicyElement{{
+			Proto:     "esp",
+			Mode:      "tunnel",
+			TunnelSrc: "2001:db8::1",
+			TunnelDst: "2001:db8::2",
+		}},
+	}}
+	_, ipv, err := buildMatchFragments(mb)
+	if err != nil {
+		t.Fatalf("buildMatchFragments: %v", err)
+	}
+	if ipv != 6 {
+		t.Fatalf("expected IPv6 policy tunnel to force ipv=6, got %d", ipv)
 	}
 }
 

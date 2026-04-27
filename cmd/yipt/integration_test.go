@@ -317,7 +317,7 @@ func TestIntegration_IpsetHashIPPortEmission(t *testing.T) {
 	if !strings.Contains(ipsetScript, "counters") {
 		t.Errorf("expected counters option\nOutput:\n%s", ipsetScript)
 	}
-	if !strings.Contains(ipsetScript, "ipset add allowed_services 10.0.0.1,tcp:22") {
+	if !strings.Contains(ipsetScript, "ipset add -exist allowed_services 10.0.0.1,tcp:22") {
 		t.Errorf("expected tuple element\nOutput:\n%s", ipsetScript)
 	}
 }
@@ -334,8 +334,11 @@ func TestIntegration_IpsetBitmapPortEmission(t *testing.T) {
 
 func TestIntegration_IpsetHashMACEmission(t *testing.T) {
 	_, ipsetScript := buildOutput(t)
-	if !strings.Contains(ipsetScript, "ipset create -exist guest_macs hash:mac family inet") {
+	if !strings.Contains(ipsetScript, "ipset create -exist guest_macs hash:mac") {
 		t.Errorf("expected hash:mac create line\nOutput:\n%s", ipsetScript)
+	}
+	if strings.Contains(ipsetScript, "guest_macs hash:mac family") {
+		t.Errorf("hash:mac must not carry family\nOutput:\n%s", ipsetScript)
 	}
 }
 
@@ -540,7 +543,7 @@ func TestIntegration_FormatIpset(t *testing.T) {
 
 func TestIntegration_Phase8_AddrTypeSrcTypeAndLimitIface(t *testing.T) {
 	ipt, _ := buildOutput(t)
-	want := "-m addrtype --src-type LOCAL --limit-iface-in lo"
+	want := "-m addrtype --src-type LOCAL --limit-iface-in"
 	if !strings.Contains(ipt, want) {
 		t.Errorf("expected %q\nOutput:\n%s", want, ipt)
 	}
@@ -709,14 +712,14 @@ func TestIntegration_Phase9_CLUSTERIP(t *testing.T) {
 
 func TestIntegration_Phase9_IDLETIMER(t *testing.T) {
 	ipt, _ := buildOutput(t)
-	if !strings.Contains(ipt, "-j IDLETIMER --timeout 600 --label metrics_idle --alarm") {
+	if !strings.Contains(ipt, "-j IDLETIMER --timeout 600 --label metrics_idle") {
 		t.Errorf("expected IDLETIMER full rendering\nOutput:\n%s", ipt)
 	}
 }
 
 func TestIntegration_Phase9_RATEEST(t *testing.T) {
 	ipt, _ := buildOutput(t)
-	if !strings.Contains(ipt, "-j RATEEST --rateest-name eth0_tcp --rateest-interval 250 --rateest-ewmalog 2") {
+	if !strings.Contains(ipt, "-j RATEEST --rateest-name eth0_tcp --rateest-interval 250ms --rateest-ewmalog 2s") {
 		t.Errorf("expected RATEEST full rendering\nOutput:\n%s", ipt)
 	}
 }
@@ -767,7 +770,7 @@ func TestIntegration_Phase10_MetadataMatches(t *testing.T) {
 		"-m rpfilter --loose --validmark --accept-local",
 		"-m quota --quota 1048576",
 		"-m connbytes --connbytes 10:100 --connbytes-dir both --connbytes-mode bytes",
-		"-m connlabel --label web --set",
+		"-m connlabel --label 10 --set",
 		"-m nfacct --nfacct-name http",
 	} {
 		if !strings.Contains(ipt, want) {

@@ -70,21 +70,21 @@ var validHelperRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // validRejectWith is the set of valid reject-with values.
 var validRejectWith = map[string]bool{
-	"icmp-net-unreachable":       true,
-	"icmp-host-unreachable":      true,
-	"icmp-port-unreachable":      true,
-	"icmp-proto-unreachable":     true,
-	"icmp-net-prohibited":        true,
-	"icmp-host-prohibited":       true,
-	"icmp-admin-prohibited":      true,
-	"tcp-reset":                  true,
-	"icmp6-no-route":             true,
-	"no-route":                   true,
-	"icmp6-adm-prohibited":       true,
-	"adm-prohibited":             true,
-	"icmp6-addr-unreachable":     true,
-	"addr-unreach":               true,
-	"icmp6-port-unreachable":     true,
+	"icmp-net-unreachable":   true,
+	"icmp-host-unreachable":  true,
+	"icmp-port-unreachable":  true,
+	"icmp-proto-unreachable": true,
+	"icmp-net-prohibited":    true,
+	"icmp-host-prohibited":   true,
+	"icmp-admin-prohibited":  true,
+	"tcp-reset":              true,
+	"icmp6-no-route":         true,
+	"no-route":               true,
+	"icmp6-adm-prohibited":   true,
+	"adm-prohibited":         true,
+	"icmp6-addr-unreachable": true,
+	"addr-unreach":           true,
+	"icmp6-port-unreachable": true,
 }
 
 // validProtocols is the set of valid protocol values for iptables.
@@ -161,7 +161,7 @@ var validDSCPClasses = map[string]bool{
 	"AF21": true, "AF22": true, "AF23": true,
 	"AF31": true, "AF32": true, "AF33": true,
 	"AF41": true, "AF42": true, "AF43": true,
-	"EF":      true,
+	"EF":          true,
 	"VOICE-ADMIT": true,
 }
 
@@ -172,8 +172,8 @@ var validAuditTypes = map[string]bool{
 
 // validClusterIPHashmodes enumerates --hashmode values for CLUSTERIP.
 var validClusterIPHashmodes = map[string]bool{
-	"sourceip": true,
-	"sourceip-sourceport": true,
+	"sourceip":                     true,
+	"sourceip-sourceport":          true,
 	"sourceip-sourceport-destport": true,
 }
 
@@ -1903,9 +1903,9 @@ func validateTimeMatch(ctx string, m *ast.TimeMatch) error {
 
 // validateAddrTypeMatch validates the addrtype match module.
 // At least one of src-type/dst-type/limit-iface-in/limit-iface-out must be set.
-// limit-iface-in and limit-iface-out are mutually exclusive.
+// limit-iface-in and limit-iface-out are mutually exclusive flag options.
 func validateAddrTypeMatch(ctx string, m *ast.AddrTypeMatch) error {
-	if m.SrcType == "" && m.DstType == "" && m.LimitIfaceIn == "" && m.LimitIfaceOut == "" {
+	if m.SrcType == "" && m.DstType == "" && !m.LimitIfaceIn && !m.LimitIfaceOut {
 		return fmt.Errorf("%s: addrtype match requires at least one of src-type, dst-type, limit-iface-in, limit-iface-out", ctx)
 	}
 	if m.SrcType != "" && !validAddrTypes[strings.ToUpper(m.SrcType)] {
@@ -1914,14 +1914,8 @@ func validateAddrTypeMatch(ctx string, m *ast.AddrTypeMatch) error {
 	if m.DstType != "" && !validAddrTypes[strings.ToUpper(m.DstType)] {
 		return fmt.Errorf("%s: unknown addrtype dst-type %q", ctx, m.DstType)
 	}
-	if m.LimitIfaceIn != "" && m.LimitIfaceOut != "" {
+	if m.LimitIfaceIn && m.LimitIfaceOut {
 		return fmt.Errorf("%s: addrtype limit-iface-in and limit-iface-out are mutually exclusive", ctx)
-	}
-	if err := validateInterfaceName(ctx, "limit-iface-in", m.LimitIfaceIn); err != nil {
-		return err
-	}
-	if err := validateInterfaceName(ctx, "limit-iface-out", m.LimitIfaceOut); err != nil {
-		return err
 	}
 	return nil
 }
@@ -2808,11 +2802,11 @@ func validateLEDTarget(ctx, j string, rule ast.Rule) error {
 // validDSCPClassesForMatch reuses validDSCPClasses (target side).
 // validTOSNames enumerates the named TOS values iptables accepts.
 var validTOSNames = map[string]bool{
-	"Minimize-Delay":        true,
-	"Maximize-Throughput":   true,
-	"Maximize-Reliability":  true,
-	"Minimize-Cost":         true,
-	"Normal-Service":        true,
+	"Minimize-Delay":       true,
+	"Maximize-Throughput":  true,
+	"Maximize-Reliability": true,
+	"Minimize-Cost":        true,
+	"Normal-Service":       true,
 }
 
 // validConnBytesDirs enumerates --connbytes-dir values.

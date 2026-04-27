@@ -175,7 +175,7 @@ chains:
       - {d: 224.0.0.0/4, j: drop}
 
       # --- addrtype src-type + limit-iface-in (Phase 8) ---
-      - {match: {addrtype: {src-type: LOCAL, limit-iface-in: lo}}, j: accept, comment: "Local-originating on lo only"}
+      - {match: {addrtype: {src-type: LOCAL, limit-iface-in: true}}, j: accept, comment: "Local-originating on input iface only"}
 
       # --- extended conntrack: ctstatus + ctdir (Phase 8) ---
       - {p: tcp, match: {conntrack: {ctstatus: [ASSURED], ctdir: ORIGINAL}}, j: accept, comment: "Assured origin-direction flows"}
@@ -304,7 +304,7 @@ chains:
       - {match: {rpfilter: {loose: true, validmark: true, accept-local: true}}, j: accept, comment: "Reverse path filter"}
       - {match: {quota: {quota: 1048576}}, j: accept, comment: "One MiB quota"}
       - {match: {connbytes: {connbytes: "10:100", connbytes-dir: both, connbytes-mode: bytes}}, j: accept, comment: "Connbytes window"}
-      - {match: {connlabel: {label: web, set: true}}, j: accept, comment: "Connlabel web"}
+      - {match: {connlabel: {label: 10, set: true}}, j: accept, comment: "Connlabel 10"}
       - {match: {nfacct: {name: http}}, j: accept, comment: "NFACCT counter"}
 
       # --- Phase 10: string, bpf, u32, statistic, and IPsec policy matches ---
@@ -354,7 +354,7 @@ chains:
       - {match: {conntrack: {ctstate: [NEW]}}, j: audit, audit-type: accept, comment: "Audit new forwarded flows"}
 
       # --- Phase 9: IDLETIMER for detecting idle flows ---
-      - {p: tcp, dp: 5000, j: idletimer, idletimer-timeout: 600, idletimer-label: "metrics_idle", idletimer-alarm: true, comment: "Metric stream idle timer"}
+      - {p: tcp, dp: 5000, j: idletimer, idletimer-timeout: 600, idletimer-label: "metrics_idle", comment: "Metric stream idle timer"}
 
       # --- Phase 9: LED trigger for hardware indicator ---
       - {p: tcp, dp: 80, j: led, led-trigger-id: "http-activity", led-delay: 200, led-always-blink: true, comment: "Blink LED on HTTP"}
@@ -404,6 +404,7 @@ chains:
       - {p: tcp, dp: 80, match: {owner: {uid-owner: 65534}}, j: accept, comment: "nobody http only"}
       # Deny raw sockets from non-root processes (-j reject masks the lack of socket).
       - {match: {owner: {socket-exists: true}}, j: accept}
+    mangle:
       - {j: XRAY_MASK}
 
   # =========================================================================

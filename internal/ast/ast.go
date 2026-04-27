@@ -51,20 +51,20 @@ type Chain struct {
 // Because YAML keys like "i!", "o!" etc. are not valid Go struct tag identifiers,
 // we implement yaml.Unmarshaler and decode manually.
 type Rule struct {
-	In      string
-	InNeg   string
-	Out     string
-	OutNeg  string
-	Src     string
-	SrcNeg  string
-	Dst     string
-	DstNeg  string
-	Proto   interface{} // string | []interface{}
-	SPort   interface{} // int | string | []interface{}
-	DPort   interface{} // int | string | []interface{}
-	SPortNeg interface{} // negated source port
-	DPortNeg interface{} // negated dest port
-	Syn     bool
+	In         string
+	InNeg      string
+	Out        string
+	OutNeg     string
+	Src        string
+	SrcNeg     string
+	Dst        string
+	DstNeg     string
+	Proto      interface{} // string | []interface{}
+	SPort      interface{} // int | string | []interface{}
+	DPort      interface{} // int | string | []interface{}
+	SPortNeg   interface{} // negated source port
+	DPortNeg   interface{} // negated dest port
+	Syn        bool
 	ICMPType   interface{} // int | string | "$resname"
 	ICMPv6Type interface{} // int | string | "$resname"
 	Jump       string
@@ -682,12 +682,12 @@ type SocketMatch struct {
 
 // AddrTypeMatch represents the addrtype match module.
 // limit-iface-in and limit-iface-out restrict the lookup to the incoming or
-// outgoing interface respectively; they are mutually exclusive.
+// outgoing interface respectively; they are mutually exclusive flag options.
 type AddrTypeMatch struct {
 	SrcType       string `yaml:"src-type"`
 	DstType       string `yaml:"dst-type"`
-	LimitIfaceIn  string `yaml:"limit-iface-in"`
-	LimitIfaceOut string `yaml:"limit-iface-out"`
+	LimitIfaceIn  bool   `yaml:"limit-iface-in"`
+	LimitIfaceOut bool   `yaml:"limit-iface-out"`
 }
 
 // MACMatch represents the mac match module.
@@ -751,12 +751,12 @@ type TCPFlagsSpec struct {
 // OwnerMatch represents the owner match module (OUTPUT/POSTROUTING only).
 // Any non-nil pointer emits the corresponding --flag; SocketExists emits --socket-exists.
 type OwnerMatch struct {
-	UIDOwner      *int   `yaml:"uid-owner"`
-	GIDOwner      *int   `yaml:"gid-owner"`
-	PIDOwner      *int   `yaml:"pid-owner"`
-	SIDOwner      *int   `yaml:"sid-owner"`
-	CmdOwner      string `yaml:"cmd-owner"`
-	SocketExists  bool   `yaml:"socket-exists"`
+	UIDOwner     *int   `yaml:"uid-owner"`
+	GIDOwner     *int   `yaml:"gid-owner"`
+	PIDOwner     *int   `yaml:"pid-owner"`
+	SIDOwner     *int   `yaml:"sid-owner"`
+	CmdOwner     string `yaml:"cmd-owner"`
+	SocketExists bool   `yaml:"socket-exists"`
 }
 
 // IPRangeMatch represents the iprange match module.
@@ -948,10 +948,10 @@ type PolicyMatch struct {
 // PolicyElement is one --reqid / --spi / --proto / ... set within a policy match.
 // Multiple elements render as multiple --next-separated blocks.
 type PolicyElement struct {
-	ReqID    int    `yaml:"reqid"`
-	SPI      string `yaml:"spi"`      // decimal or 0xHEX
-	Proto    string `yaml:"proto"`    // "ah", "esp", "ipcomp"
-	Mode     string `yaml:"mode"`     // "tunnel" or "transport"
+	ReqID     int    `yaml:"reqid"`
+	SPI       string `yaml:"spi"`   // decimal or 0xHEX
+	Proto     string `yaml:"proto"` // "ah", "esp", "ipcomp"
+	Mode      string `yaml:"mode"`  // "tunnel" or "transport"
 	TunnelSrc string `yaml:"tunnel-src"`
 	TunnelDst string `yaml:"tunnel-dst"`
 }
@@ -967,11 +967,11 @@ type IPv6HeaderMatch struct {
 
 // FragMatch represents the frag (Fragment) match module (IPv6-only).
 type FragMatch struct {
-	ID     string `yaml:"id"`     // single id or "lo:hi" range
-	FragRes bool  `yaml:"fragres"`
-	First  bool   `yaml:"first"`
-	More   bool   `yaml:"more"`
-	Last   bool   `yaml:"last"`
+	ID      string `yaml:"id"` // single id or "lo:hi" range
+	FragRes bool   `yaml:"fragres"`
+	First   bool   `yaml:"first"`
+	More    bool   `yaml:"more"`
+	Last    bool   `yaml:"last"`
 }
 
 // HBHMatch represents the hbh (Hop-By-Hop Options) match module (IPv6-only).
@@ -990,12 +990,12 @@ type DstOptsMatch struct {
 
 // RtMatch represents the rt (Routing Header) match module (IPv6-only).
 type RtMatch struct {
-	Type    *int   `yaml:"type"`
-	Segsleft string `yaml:"segsleft"` // single N or "lo:hi"
-	Length  int    `yaml:"length"`
-	Reserve bool   `yaml:"reserve"`
-	Addrs   string `yaml:"addrs"` // comma-separated list of IPv6 addresses (type 0)
-	NotStrict bool `yaml:"not-strict"`
+	Type      *int   `yaml:"type"`
+	Segsleft  string `yaml:"segsleft"` // single N or "lo:hi"
+	Length    int    `yaml:"length"`
+	Reserve   bool   `yaml:"reserve"`
+	Addrs     string `yaml:"addrs"` // comma-separated list of IPv6 addresses (type 0)
+	NotStrict bool   `yaml:"not-strict"`
 }
 
 // MHMatch represents the mh (Mobility Header) match module (IPv6-only).

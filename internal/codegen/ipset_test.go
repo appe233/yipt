@@ -18,7 +18,7 @@ func TestRenderIpsetScript_IPv4Only(t *testing.T) {
 	if !strings.Contains(got, "ipset create -exist trusted_networks hash:net family inet") {
 		t.Errorf("expected create line with -exist and family inet, got:\n%s", got)
 	}
-	if !strings.Contains(got, "ipset add trusted_networks 192.168.1.0/24") {
+	if !strings.Contains(got, "ipset add -exist trusted_networks 192.168.1.0/24") {
 		t.Errorf("expected add line for element, got:\n%s", got)
 	}
 	// Must not have inet6 for IPv4-only set
@@ -71,7 +71,7 @@ func TestRenderIpsetScript_HashIPPortWithTimeout(t *testing.T) {
 	if !strings.Contains(got, want) {
 		t.Errorf("missing %q in:\n%s", want, got)
 	}
-	if !strings.Contains(got, "ipset add svc 10.0.0.1,tcp:22") {
+	if !strings.Contains(got, "ipset add -exist svc 10.0.0.1,tcp:22") {
 		t.Errorf("missing tuple add line in:\n%s", got)
 	}
 }
@@ -105,8 +105,11 @@ func TestRenderIpsetScript_HashMACNoAddress(t *testing.T) {
 		}},
 	}
 	got := RenderIpsetScript(prog)
-	if !strings.Contains(got, "ipset create -exist macs hash:mac family inet") {
+	if !strings.Contains(got, "ipset create -exist macs hash:mac") {
 		t.Errorf("expected hash:mac create line, got:\n%s", got)
+	}
+	if strings.Contains(got, "macs hash:mac family") {
+		t.Errorf("hash:mac must not include family, got:\n%s", got)
 	}
 }
 

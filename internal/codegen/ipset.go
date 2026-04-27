@@ -23,8 +23,7 @@ func RenderIpsetScript(prog *ir.Program) string {
 		sb.WriteString(set.Name)
 		sb.WriteString(" ")
 		sb.WriteString(setType)
-		// Bitmap types take `range` (rendered below) instead of `family`.
-		if !strings.HasPrefix(setType, "bitmap:") {
+		if ipsetTypeUsesFamily(setType) {
 			sb.WriteString(" family ")
 			sb.WriteString(set.Family)
 		}
@@ -33,7 +32,7 @@ func RenderIpsetScript(prog *ir.Program) string {
 		}
 		sb.WriteString("\n")
 		for _, elem := range set.Elements {
-			sb.WriteString("ipset add ")
+			sb.WriteString("ipset add -exist ")
 			sb.WriteString(set.Name)
 			sb.WriteString(" ")
 			sb.WriteString(elem)
@@ -42,6 +41,18 @@ func RenderIpsetScript(prog *ir.Program) string {
 	}
 
 	return sb.String()
+}
+
+func ipsetTypeUsesFamily(setType string) bool {
+	if strings.HasPrefix(setType, "bitmap:") {
+		return false
+	}
+	switch setType {
+	case "hash:mac", "list:set":
+		return false
+	default:
+		return true
+	}
 }
 
 // renderIpsetOptions renders creation attributes for a set in the order ipset expects.
