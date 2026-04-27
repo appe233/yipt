@@ -85,14 +85,13 @@ For a new rule field, target, match module, table, or ipset feature:
 
 ## Current Roadmap State
 
-Phases 1 through 9 of `write-a-detailed-and-buzzing-wozniak.md` are substantially implemented in the current working tree. Phase 9 packet-modification targets are present across AST, sema, IR, codegen, fixture, and integration tests.
+Phases 1 through 10 of `write-a-detailed-and-buzzing-wozniak.md` are substantially implemented in the current working tree. Phase 10 exotic matches and the `security` table are present across AST, sema, IR, codegen, fixture, and integration tests.
 
 Known follow-up work:
 
-- Keep `README.md` in sync with newly added YAML fields.
 - Add stronger AST tests for every boolean field, because some current boolean unmarshaling uses string comparison.
 - Run `iptables-restore --test` / `ip6tables-restore --test` on a Linux runner for generated syntax validation.
-- Continue Phase 10 exotic matches and security-table polish from the roadmap.
+- If adding more long-tail iptables modules, keep `README.md`, `rule_files/all_features.yaml`, and integration assertions in the same commit.
 
 ## YAML Surface Summary
 
@@ -124,5 +123,4 @@ Supported resource types:
 
 Supported ipset `set-type` values include `hash:net`, `hash:ip`, `hash:ip,port`, `hash:net,port`, `hash:ip,port,ip`, `hash:ip,port,net`, `hash:net,port,net`, `hash:mac`, `hash:net,iface`, `hash:ip,mark`, `bitmap:ip`, `bitmap:ip,mac`, `bitmap:port`, and `list:set`.
 
-Common target families now covered include NAT (`snat`, `dnat`, `masquerade`, `redirect`, `netmap`), packet marks (`mark`, `connmark`), conntrack bypass/config (`ct`, `notrack`), TCP polish (`tcpmss`, `tcp-flags`, `tcp-option`, `fragment`), userspace integration (`nflog`, `nfqueue`, `set`), and Phase 9 packet-modification targets (`classify`, `dscp`, `tos`, `ecn`, `ttl`, `hl`, `secmark`, `connsecmark`, `synproxy`, `tee`, `trace`, `audit`, `checksum`, `clusterip`, `idletimer`, `rateest`, `led`).
-
+Common target families now covered include NAT (`snat`, `dnat`, `masquerade`, `redirect`, `netmap`), packet marks (`mark`, `connmark`), conntrack bypass/config (`ct`, `notrack`), TCP polish (`tcpmss`, `tcp-flags`, `tcp-option`, `fragment`), userspace integration (`nflog`, `nfqueue`, `set`), Phase 9 packet-modification targets (`classify`, `dscp`, `tos`, `ecn`, `ttl`, `hl`, `secmark`, `connsecmark`, `synproxy`, `tee`, `trace`, `audit`, `checksum`, `clusterip`, `idletimer`, `rateest`, `led`), and Phase 10 exotic matches (`string`, `bpf`, `u32`, `statistic`, `policy`, `helper`, `realm`, `cluster`, `cpu`, `devgroup`, `rpfilter`, `quota`, `connbytes`, `connlabel`, `nfacct`, IPv6 extension-header matches, and match-side `dscp`/`tos`/`ecn`).

@@ -11,6 +11,12 @@ resources:
       - 192.168.1.0/24
       - 10.0.0.0/24
 
+  # --- ipset: dynamic blocklist populated by the SET target (fail2ban-style) ---
+  dynamic_blocklist:
+    type: ipset
+    elements:
+      - 192.0.2.0/24  # TEST-NET-1 placeholder; real entries added at runtime
+
   bgp_peers:
     type: ipset
     elements:
@@ -24,6 +30,48 @@ resources:
       - 10.100.0.0/14
       - 10.104.0.0/14
       - 172.31.0.0/16
+
+  # --- ipset (hash:ip,port): per-(IP, protocol:port) tuple matching with timeout ---
+  allowed_services:
+    type: ipset
+    set-type: hash:ip,port
+    set-options:
+      timeout: 3600
+      maxelem: 8192
+      counters: true
+    elements:
+      - 10.0.0.1,tcp:22
+      - 10.0.0.2,tcp:443
+      - 10.0.0.3,udp:53
+
+  # --- ipset (hash:mac): MAC-address guest list ---
+  guest_macs:
+    type: ipset
+    set-type: hash:mac
+    elements:
+      - 02:00:00:00:00:01
+      - 02:00:00:00:00:02
+
+  # --- ipset (bitmap:port): bitmap of allowed destination ports ---
+  high_ports:
+    type: ipset
+    set-type: bitmap:port
+    set-options:
+      range: "32768-65535"
+    elements:
+      - 32768-40000
+      - 40001
+
+  # --- ipset (hash:ip): single-IP set with netmask attribute ---
+  office_ips:
+    type: ipset
+    set-type: hash:ip
+    set-options:
+      netmask: 24
+      maxelem: 1024
+    elements:
+      - 198.51.100.10
+      - 198.51.100.20
 
   # --- portset: port number sets (compiled to multiport rules) ---
   wg_ports:
@@ -126,6 +174,28 @@ chains:
       - {match: {addrtype: {dst-type: ANYCAST}},   j: drop}
       - {d: 224.0.0.0/4, j: drop}
 
+      # --- addrtype src-type + limit-iface-in (Phase 8) ---
+      - {match: {addrtype: {src-type: LOCAL, limit-iface-in: lo}}, j: accept, comment: "Local-originating on lo only"}
+
+      # --- extended conntrack: ctstatus + ctdir (Phase 8) ---
+      - {p: tcp, match: {conntrack: {ctstatus: [ASSURED], ctdir: ORIGINAL}}, j: accept, comment: "Assured origin-direction flows"}
+
+      # --- TCP flag match (stealth scan defenses) ---
+      - {p: tcp, tcp-flags: {mask: [SYN, ACK, FIN, RST], comp: [FIN]}, j: drop, comment: "FIN-only stealth scan"}
+      - {p: tcp, tcp-flags: {mask: [ALL], comp: [NONE]},               j: drop, comment: "NULL scan"}
+
+      # --- IPv4 fragment drop ---
+      - {fragment: true, j: drop, comment: "Drop IPv4 fragments"}
+
+      # --- TCP option match (record-route option) ---
+      - {p: tcp, tcp-option: 7, j: drop, comment: "Drop TCP option 7"}
+
+      # --- connlimit: cap concurrent SSH connections per source host ---
+      - {p: tcp, dp: 22, syn: true, match: {connlimit: {above: 10, mask: 32, saddr: true}}, reject-with: tcp-reset, j: reject, comment: "SSH: reject > 10 concurrent per src"}
+
+      # --- hashlimit: per-source HTTP new-connection rate bucket ---
+      - {p: tcp, dp: 80, syn: true, match: {hashlimit: {name: http_rate, upto: 100/second, burst: 200, mode: [srcip], srcmask: 32, htable-expire: 60000}}, j: accept, comment: "HTTP rate-limited accept"}
+
       # --- SSH with SYN flag, conntrack ctstate, and jump to brute-force chain ---
       - {p: tcp, dp: 22, syn: true, match: {conntrack: {ctstate: [NEW]}}, j: SSHBRUTE, comment: "SSH anti-brute-force"}
 
@@ -168,6 +238,18 @@ chains:
       # --- SSH from trusted_networks (ipset) only ---
       - {s: $trusted_networks, p: tcp, dp: 22, syn: true, match: {conntrack: {ctstate: [NEW]}}, j: accept}
 
+      # --- Multi-dim set match: hash:ip,port keyed on (dst IP, dst port) ---
+      - {d: "$allowed_services[dst,dst]", j: accept, comment: "Allow listed (IP,port) tuples"}
+
+      # --- MAC allow list (hash:mac set) ---
+      - {s: "$guest_macs[src]", j: accept, comment: "Guest MAC allow list"}
+
+      # --- Bitmap port allow list (bitmap:port, direction dst) ---
+      - {p: tcp, d: "$high_ports[dst]", j: accept, comment: "Allow configured high ports"}
+
+      # --- Single-IP hash:ip office allow list ---
+      - {s: $office_ips, p: tcp, dp: 443, j: accept, comment: "Office HTTPS"}
+
       # --- Drop SMB via portset reference ---
       - {p: udp, dp: $smb_udp_ports,    j: drop}
       - {p: udp, dp: [137:139],         j: drop}   # port range syntax
@@ -180,12 +262,137 @@ chains:
       # --- limit match (rate limiting / log DOS) ---
       - {match: {limit: {limit: 1/second, limit-burst: 100}}, log-prefix: "iptables[DOS]: ", j: log}
 
+      # --- NFLOG: structured logging to group 2 (userspace daemon consumes) ---
+      - {match: {limit: {limit: 5/second, limit-burst: 10}}, j: nflog, nflog-group: 2, nflog-prefix: "DROPPED: ", nflog-range: 256, nflog-threshold: 5, comment: "Ship drops to ulogd"}
+
+      # --- Drop dynamically-blocked sources (populated by SET target below) ---
+      - {s: $dynamic_blocklist, j: drop, comment: "Drop fail2ban-marked offenders"}
+
+      # --- iprange: block bogon range the ipset would be overkill for ---
+      - {match: {iprange: {src-range: "198.18.0.0-198.19.255.255"}}, j: drop, comment: "Block benchmarking range"}
+
+      # --- length: drop oversized ICMP (often reconnaissance / smurf) ---
+      - {p: icmp, match: {length: {length: "1000:65535"}}, j: drop, comment: "Oversized ICMP"}
+
+      # --- ttl (IPv4) / hl (IPv6): low hop counts often indicate spoofing ---
+      - {match: {ttl: {lt: 5}}, j: drop, comment: "Low TTL drop"}
+      - {match: {hl: {lt: 5}},  j: drop, comment: "Low HL drop"}
+
+      # --- pkttype: drop link-layer broadcast packets aimed at unicast destinations ---
+      - {match: {pkttype: {pkt-type: broadcast}}, d: 127.0.0.0/8, j: drop, comment: "Broadcast to loopback"}
+
+      # --- time: business-hours window scoped to a specific date range (Phase 8) ---
+      - {p: tcp, dp: 8080, match: {time: {timestart: "09:00", timestop: "17:00", weekdays: "Mon,Tue,Wed,Thu,Fri", datestart: "2026-01-01T00:00:00", datestop: "2026-12-31T23:59:59", monthdays: "1,15", utc: true}}, j: accept, comment: "Business hours + UTC + monthdays"}
+
+      # --- MAC source negation (Phase 8) ---
+      - {match: {mac: {"mac-source!": "aa:bb:cc:dd:ee:ff"}}, j: drop, comment: "Not from this MAC"}
+
+      # --- Phase 9: SYNPROXY for SYN-flood mitigation on HTTPS ---
+      - {p: tcp, dp: 443, syn: true, j: synproxy, synproxy-mss: 1460, synproxy-wscale: 7, synproxy-timestamp: true, synproxy-sack-perm: true, comment: "SYN flood protection"}
+
+      # --- Phase 10: match side of packet-modification targets ---
+      - {match: {dscp: {dscp-class: AF41}}, j: accept, comment: "Match AF41 DSCP"}
+      - {match: {tos: {tos: "0x10/0x3f"}}, j: accept, comment: "Match legacy ToS"}
+      - {p: tcp, match: {ecn: {tcp-ece: true, ip-ect: 1}}, j: accept, comment: "Match TCP ECN"}
+
+      # --- Phase 10: metadata / accounting matches ---
+      - {match: {helper: {name: ftp}}, j: accept, comment: "FTP helper flow"}
+      - {match: {realm: {realm: "0x10/0xff"}}, j: accept, comment: "Routing realm"}
+      - {match: {cluster: {total-nodes: 4, local-node: 2, hash-seed: 12345}}, j: accept, comment: "Cluster node selection"}
+      - {match: {cpu: {cpu: 1}}, j: accept, comment: "CPU-local packet"}
+      - {match: {devgroup: {src-group: "10/0xff", dst-group: 20}}, j: accept, comment: "Device group match"}
+      - {match: {rpfilter: {loose: true, validmark: true, accept-local: true}}, j: accept, comment: "Reverse path filter"}
+      - {match: {quota: {quota: 1048576}}, j: accept, comment: "One MiB quota"}
+      - {match: {connbytes: {connbytes: "10:100", connbytes-dir: both, connbytes-mode: bytes}}, j: accept, comment: "Connbytes window"}
+      - {match: {connlabel: {label: web, set: true}}, j: accept, comment: "Connlabel web"}
+      - {match: {nfacct: {name: http}}, j: accept, comment: "NFACCT counter"}
+
+      # --- Phase 10: string, bpf, u32, statistic, and IPsec policy matches ---
+      - {match: {string: {algo: bm, string: BitTorrent, icase: true}}, j: drop, comment: "Drop BitTorrent marker"}
+      - {match: {bpf: {bytecode: "4,48 0 0 9,21 0 1 6,6 0 0 1,6 0 0 0"}}, j: accept, comment: "Classic BPF"}
+      - {match: {u32: {u32: "0>>22&0x3C@12>>26&0x3F=0x10"}}, j: accept, comment: "U32 payload test"}
+      - {match: {statistic: {mode: random, probability: 0.5}}, j: accept, comment: "Random sample"}
+      - {match: {statistic: {mode: nth, every: 3, packet: 0}}, j: accept, comment: "Nth sample"}
+      - match:
+          policy:
+            dir: in
+            pol: ipsec
+            strict: true
+            elements:
+              - {proto: esp, mode: tunnel, tunnel-src: 2001:db8::1, tunnel-dst: 2001:db8::2}
+        j: accept
+        comment: "IPsec tunnel policy"
+
+      # --- Phase 10: IPv6 extension-header matches ---
+      - {match: {ipv6header: {header: [hop, dst], soft: true}}, j: accept, comment: "IPv6 extension headers"}
+      - {match: {frag: {id: "1:10", first: true}}, j: accept, comment: "IPv6 fragment header"}
+      - {match: {hbh: {length: 8, opts: "1:2"}}, j: accept, comment: "IPv6 hop-by-hop options"}
+      - {match: {dst: {length: 8, opts: "1:2"}}, j: accept, comment: "IPv6 destination options"}
+      - {match: {rt: {type: 0, segsleft: "0:2", length: 16, reserve: true, addrs: "2001:db8::1,2001:db8::2", not-strict: true}}, j: accept, comment: "IPv6 routing header"}
+      - {match: {mh: {type: binding-update}}, j: accept, comment: "IPv6 mobility header"}
+    security:
+      # --- Phase 10: security table (MAC labels evaluated after filter). ---
+      - {p: tcp, dp: 443, j: secmark, selctx: "system_u:object_r:https_security_t:s0", comment: "Security-table HTTPS label"}
+
   # =========================================================================
-  # FORWARD — forwarding chain; policy drop
+  # FORWARD — forwarding chain; policy drop.
+  # mangle rules here clamp MSS for tunnel/PPPoE/VPN scenarios.
   # =========================================================================
   FORWARD:
     policy: drop
-    filter: []
+    filter:
+      # Bridge firewall: only forward between specific physical interfaces.
+      - {match: {physdev: {physdev-in: eth0, physdev-out: eth1, physdev-is-bridged: true}}, j: accept, comment: "Bridged eth0 -> eth1"}
+
+      # --- NFQUEUE: hand TCP flows to Suricata/Snort in IPS mode ---
+      - {p: tcp, j: nfqueue, queue-num: 0, queue-bypass: true, comment: "Inspect TCP via queue 0"}
+
+      # --- NFQUEUE: load-balance UDP across 4 queues with CPU fanout ---
+      - {p: udp, j: nfqueue, queue-balance: "0:3", queue-cpu-fanout: true, comment: "UDP IDS load balance"}
+
+      # --- Phase 9: AUDIT target for compliance logging ---
+      - {match: {conntrack: {ctstate: [NEW]}}, j: audit, audit-type: accept, comment: "Audit new forwarded flows"}
+
+      # --- Phase 9: IDLETIMER for detecting idle flows ---
+      - {p: tcp, dp: 5000, j: idletimer, idletimer-timeout: 600, idletimer-label: "metrics_idle", idletimer-alarm: true, comment: "Metric stream idle timer"}
+
+      # --- Phase 9: LED trigger for hardware indicator ---
+      - {p: tcp, dp: 80, j: led, led-trigger-id: "http-activity", led-delay: 200, led-always-blink: true, comment: "Blink LED on HTTP"}
+    mangle:
+      # Clamp MSS on all outgoing SYN packets to the path MTU.
+      - {p: tcp, tcp-flags: {mask: [SYN, RST], comp: [SYN]}, j: tcpmss, clamp-mss-to-pmtu: true, comment: "Clamp MSS to PMTU"}
+      # Explicit MSS value for a specific tunnel interface.
+      - {o: wg0, p: tcp, tcp-flags: {mask: [SYN], comp: [SYN]}, j: tcpmss, set-mss: 1360}
+
+      # --- Phase 9: CLASSIFY assigns a CBQ/HTB class to SSH ---
+      - {p: tcp, dp: 22, j: classify, set-class: "1:10", comment: "SSH priority class"}
+
+      # --- Phase 9: DSCP set-dscp-class for SIP (EF / expedited forwarding) ---
+      - {p: udp, dp: 5060, j: dscp, set-dscp-class: "EF", comment: "SIP gets EF"}
+
+      # --- Phase 9: TOS set-tos (legacy IPv4 ToS) ---
+      - {p: tcp, dp: 80, j: tos, set-tos: "0x10", comment: "HTTP minimize-delay ToS"}
+
+      # --- Phase 9: TTL target — decrement by 1 (IPv4 only) ---
+      - {p: tcp, j: ttl, ttl-dec: 1, comment: "Decrement TTL"}
+
+      # --- Phase 9: HL target — set hop limit (IPv6 only) ---
+      - {d: "2001:db8::/32", j: hl, hl-set: 64, comment: "Normalize IPv6 hop limit"}
+
+      # --- Phase 9: SECMARK labels HTTPS traffic with a SELinux context ---
+      - {p: tcp, dp: 443, j: secmark, selctx: "system_u:object_r:https_t:s0", comment: "SECMARK HTTPS"}
+
+      # --- Phase 9: CONNSECMARK persists the SECMARK onto the conntrack ---
+      - {match: {conntrack: {ctstate: [NEW]}}, j: connsecmark, connsecmark-save: true, comment: "Save secmark to conntrack"}
+
+      # --- Phase 9: TEE mirrors DNS queries to an analyzer ---
+      - {p: udp, dp: 53, j: tee, gateway: "10.10.10.2", comment: "Mirror DNS to analyzer"}
+
+      # --- Phase 9: CHECKSUM fills DHCP offer checksum for virtio bridges ---
+      - {p: udp, dp: 67, j: checksum, checksum-fill: true, comment: "Fix DHCP checksum"}
+
+      # --- Phase 9: RATEEST provides a named estimator for other rules ---
+      - {p: tcp, j: rateest, rateest-name: "eth0_tcp", rateest-interval: 250, rateest-ewmalog: 2, comment: "TCP rate estimator"}
 
   # =========================================================================
   # OUTPUT — outbound; policy accept
@@ -193,15 +400,46 @@ chains:
   OUTPUT:
     policy: accept
     filter:
+      # Only allow the "nobody" user (uid 65534) to initiate outbound HTTP.
+      - {p: tcp, dp: 80, match: {owner: {uid-owner: 65534}}, j: accept, comment: "nobody http only"}
+      # Deny raw sockets from non-root processes (-j reject masks the lack of socket).
+      - {match: {owner: {socket-exists: true}}, j: accept}
       - {j: XRAY_MASK}
 
   # =========================================================================
-  # PREROUTING (mangle table) — tproxy / socket dispatch
+  # PREROUTING — tproxy/socket dispatch (mangle) + connection-tracking bypass (raw)
   # =========================================================================
   PREROUTING:
     mangle:
-      - {p: tcp, match: {socket: {}}, j: DIVERT}
+      # socket match with --transparent for TPROXY-paired lookups (Phase 8).
+      - {p: tcp, match: {socket: {transparent: true}}, j: DIVERT}
       - {j: XRAY}
+      # Restore packet mark from conntrack mark (policy-routing return path).
+      - {j: connmark, restore-mark: true, comment: "Restore connmark -> pktmark"}
+      # Shortcut: if the connection already has a connmark, skip further marking.
+      - {match: {connmark: {mark: "0xff"}}, j: accept, comment: "Connmark shortcut"}
+
+      # --- Phase 9: ECN strips ECN bits on incoming TCP (legacy-peer shim) ---
+      - {p: tcp, j: ecn, ecn-tcp-remove: true, comment: "Strip TCP ECN for legacy peers"}
+
+      # --- Phase 9: CLUSTERIP active/active HA on a cluster VIP ---
+      - {d: 10.0.0.10, p: tcp, dp: 443, j: clusterip, clusterip-new: true, clusterip-hashmode: "sourceip", clusterip-clustermac: "01:00:5e:01:02:03", clusterip-total-nodes: 4, clusterip-local-node: 1, clusterip-hash-init: 12345, comment: "HA cluster node 1/4"}
+    raw:
+      # Disable conntrack for DNS replies from our resolver (performance).
+      - {p: udp, sp: 53, notrack: true, j: ct, comment: "Bypass conntrack for DNS"}
+      # Route FTP into a dedicated zone and attach the FTP helper.
+      - {p: tcp, dp: 21, zone: 5, helper: ftp, j: ct, comment: "FTP helper + zone 5"}
+
+      # --- Phase 9: TRACE to debug packet path for a specific port ---
+      - {p: tcp, dp: 8444, j: trace, comment: "Trace troubleshoot port"}
+
+  # =========================================================================
+  # POSTROUTING — source NAT and 1:1 subnet mapping (nat table)
+  # =========================================================================
+  POSTROUTING:
+    nat:
+      # --- Phase 9: NETMAP for 1:1 subnet translation ---
+      - {s: 10.0.0.0/24, j: netmap, netmap-to: "192.168.100.0/24", comment: "1:1 subnet NAT"}
 
   # =========================================================================
   # DOCKER-USER — Docker integration; no policy (user-defined chain)
@@ -218,6 +456,12 @@ chains:
   # =========================================================================
   SSHBRUTE:
     filter:
+      # Demonstrate match list-form: two recent entries in one rule (rcheck then update) (Phase 8).
+      - match:
+          - {recent: {name: SSH_CHECK, rcheck: true, seconds: 600, hitcount: 3, rsource: true, reap: true, mask: "255.255.255.0"}}
+          - {recent: {name: SSH_CHECK, remove: true}}
+        j: drop
+        comment: "Phase 8: chained recent rcheck+remove"
       - {match: {recent: {name: SSH, set: true}}}
       - {
           match: {
@@ -227,7 +471,11 @@ chains:
           log-prefix: "iptables[SSH-brute]: ",
           j: log
         }
+      # --- SET: add repeat offender to dynamic blocklist with 1h timeout ---
+      - {match: {recent: {name: SSH, update: true, seconds: 300, hitcount: 10}}, j: set, add-set: dynamic_blocklist, set-flags: [src], set-exist: true, set-timeout: 3600, comment: "Promote offender to blocklist"}
       - {match: {recent: {name: SSH, update: true, seconds: 300, hitcount: 10}}, j: drop}
+      # --- SET: clear offender from blocklist on confirmed accept (symmetry demo) ---
+      - {j: set, del-set: dynamic_blocklist, set-flags: [src], comment: "Forgive on accept path"}
       - {j: accept}
 
   # =========================================================================
@@ -285,6 +533,10 @@ chains:
       - {match: {mark: {mark: "0xff"}}, j: return}
       # set-mark + mark target
       - {p: [udp, tcp], set-mark: 1, j: mark}
+      # Persist the packet mark into the conntrack mark so PREROUTING can restore it.
+      - {p: [udp, tcp], j: connmark, save-mark: true, nfmask: "0xff", ctmask: "0xff", comment: "Save pktmark -> connmark"}
+      # Explicit connmark value (no source mark needed).
+      - {d: 10.200.0.0/16, j: connmark, set-mark: "0x42"}
 
   # =========================================================================
   # DIVERT — socket divert (mangle table)

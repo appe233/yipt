@@ -360,6 +360,101 @@ match:
     physdev-in: eth0
     physdev-out: eth1
     physdev-is-bridged: true
+
+  dscp:
+    dscp-class: AF41
+
+  tos:
+    tos: "0x10/0x3f"
+
+  ecn:
+    tcp-ece: true
+    ip-ect: 1
+
+  helper:
+    name: ftp
+
+  realm:
+    realm: "0x10/0xff"
+
+  cluster:
+    total-nodes: 4
+    local-node: 2
+    hash-seed: 12345
+
+  cpu:
+    cpu: 1
+
+  devgroup:
+    src-group: "10/0xff"
+    dst-group: 20
+
+  rpfilter:
+    loose: true
+    validmark: true
+    accept-local: true
+
+  quota:
+    quota: 1048576
+
+  connbytes:
+    connbytes: "10:100"
+    connbytes-dir: both
+    connbytes-mode: bytes
+
+  connlabel:
+    label: web
+    set: true
+
+  nfacct:
+    name: http
+
+  string:
+    algo: bm
+    string: BitTorrent
+    icase: true
+
+  bpf:
+    bytecode: "4,48 0 0 9,21 0 1 6,6 0 0 1,6 0 0 0"
+
+  u32:
+    u32: "0>>22&0x3C@12>>26&0x3F=0x10"
+
+  statistic:
+    mode: nth
+    every: 3
+    packet: 0
+
+  policy:
+    dir: in
+    pol: ipsec
+    strict: true
+    elements:
+      - {proto: esp, mode: tunnel, tunnel-src: 2001:db8::1, tunnel-dst: 2001:db8::2}
+
+  ipv6header:
+    header: [hop, dst]
+    soft: true
+
+  frag:
+    id: "1:10"
+    first: true
+
+  hbh:
+    length: 8
+    opts: "1:2"
+
+  dst:
+    length: 8
+    opts: "1:2"
+
+  rt:
+    type: 0
+    segsleft: "0:2"
+    length: 16
+
+  mh:
+    type: binding-update
 ```
 
 Multiple modules can be combined. `match:` can also be a sequence when the same module must be rendered more than once in order:

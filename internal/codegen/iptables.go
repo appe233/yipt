@@ -8,7 +8,9 @@ import (
 )
 
 // tableOrder defines which tables to emit and in what order.
-var tableOrder = []string{"filter", "nat", "mangle"}
+// raw runs first in the packet flow, then filter/nat/mangle, with security
+// at the end (MAC rules are checked just before the final ACCEPT verdict).
+var tableOrder = []string{"raw", "filter", "nat", "mangle", "security"}
 
 // RenderIptablesRestore renders the iptables-restore compatible output.
 func RenderIptablesRestore(prog *ir.Program) string {
@@ -205,10 +207,14 @@ func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string, includeVe
 	// Source address / set.
 	if r.Src != "" {
 		if r.SrcIsSet {
+			dir := r.SrcSetDir
+			if dir == "" {
+				dir = "src"
+			}
 			if r.SrcNeg {
-				parts = append(parts, "-m", "set", "!", "--match-set", r.Src, "src")
+				parts = append(parts, "-m", "set", "!", "--match-set", r.Src, dir)
 			} else {
-				parts = append(parts, "-m", "set", "--match-set", r.Src, "src")
+				parts = append(parts, "-m", "set", "--match-set", r.Src, dir)
 			}
 		} else {
 			if r.SrcNeg {
@@ -222,10 +228,14 @@ func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string, includeVe
 	// Destination address / set.
 	if r.Dst != "" {
 		if r.DstIsSet {
+			dir := r.DstSetDir
+			if dir == "" {
+				dir = "dst"
+			}
 			if r.DstNeg {
-				parts = append(parts, "-m", "set", "!", "--match-set", r.Dst, "dst")
+				parts = append(parts, "-m", "set", "!", "--match-set", r.Dst, dir)
 			} else {
-				parts = append(parts, "-m", "set", "--match-set", r.Dst, "dst")
+				parts = append(parts, "-m", "set", "--match-set", r.Dst, dir)
 			}
 		} else {
 			if r.DstNeg {
@@ -280,6 +290,21 @@ func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string, includeVe
 	// SYN flag.
 	if r.Syn {
 		parts = append(parts, "--syn")
+	}
+
+	// TCP flags match.
+	if r.TCPFlagsMask != "" {
+		parts = append(parts, "--tcp-flags", r.TCPFlagsMask, r.TCPFlagsComp)
+	}
+
+	// TCP option match.
+	if r.TCPOption != 0 {
+		parts = append(parts, "--tcp-option", fmt.Sprintf("%d", r.TCPOption))
+	}
+
+	// IPv4 fragment match.
+	if r.Fragment {
+		parts = append(parts, "-f")
 	}
 
 	// ICMP type.
@@ -362,6 +387,227 @@ func renderRuleLine(r *ir.IRRule, sportOverride, dportOverride string, includeVe
 			tArgs = append(tArgs, "--tproxy-mark", r.TProxyMark)
 		}
 		parts = append(parts, tArgs...)
+	case "CT":
+		ctArgs := []string{"-j", "CT"}
+		if r.Zone != 0 {
+			ctArgs = append(ctArgs, "--zone", fmt.Sprintf("%d", r.Zone))
+		}
+		if r.Helper != "" {
+			ctArgs = append(ctArgs, "--helper", r.Helper)
+		}
+		if len(r.CTEvents) > 0 {
+			ctArgs = append(ctArgs, "--ctevents", strings.Join(r.CTEvents, ","))
+		}
+		if r.CTMask != "" {
+			ctArgs = append(ctArgs, "--ctmask", r.CTMask)
+		}
+		if r.NfMask != "" {
+			ctArgs = append(ctArgs, "--nfmask", r.NfMask)
+		}
+		parts = append(parts, ctArgs...)
+	case "NOTRACK":
+		parts = append(parts, "-j", "NOTRACK")
+	case "TCPMSS":
+		tArgs := []string{"-j", "TCPMSS"}
+		if r.SetMSS > 0 {
+			tArgs = append(tArgs, "--set-mss", fmt.Sprintf("%d", r.SetMSS))
+		} else if r.ClampMSSToPMTU {
+			tArgs = append(tArgs, "--clamp-mss-to-pmtu")
+		}
+		parts = append(parts, tArgs...)
+	case "CONNMARK":
+		cArgs := []string{"-j", "CONNMARK"}
+		switch {
+		case r.SaveMark:
+			cArgs = append(cArgs, "--save-mark")
+		case r.RestoreMark:
+			cArgs = append(cArgs, "--restore-mark")
+		case r.SetMark != "":
+			cArgs = append(cArgs, "--set-mark", r.SetMark)
+		}
+		if r.NfMask != "" {
+			cArgs = append(cArgs, "--nfmask", r.NfMask)
+		}
+		if r.CTMask != "" {
+			cArgs = append(cArgs, "--ctmask", r.CTMask)
+		}
+		parts = append(parts, cArgs...)
+	case "NFLOG":
+		nArgs := []string{"-j", "NFLOG"}
+		if r.NflogGroup != 0 {
+			nArgs = append(nArgs, "--nflog-group", fmt.Sprintf("%d", r.NflogGroup))
+		}
+		if r.NflogPrefix != "" {
+			nArgs = append(nArgs, "--nflog-prefix", `"`+r.NflogPrefix+`"`)
+		}
+		if r.NflogRange != 0 {
+			nArgs = append(nArgs, "--nflog-range", fmt.Sprintf("%d", r.NflogRange))
+		}
+		if r.NflogThreshold != 0 {
+			nArgs = append(nArgs, "--nflog-threshold", fmt.Sprintf("%d", r.NflogThreshold))
+		}
+		parts = append(parts, nArgs...)
+	case "NFQUEUE":
+		qArgs := []string{"-j", "NFQUEUE"}
+		switch {
+		case r.QueueBalance != "":
+			qArgs = append(qArgs, "--queue-balance", r.QueueBalance)
+		case r.QueueNumSet:
+			qArgs = append(qArgs, "--queue-num", fmt.Sprintf("%d", r.QueueNum))
+		}
+		if r.QueueBypass {
+			qArgs = append(qArgs, "--queue-bypass")
+		}
+		if r.QueueCPUFanout {
+			qArgs = append(qArgs, "--queue-cpu-fanout")
+		}
+		parts = append(parts, qArgs...)
+	case "SET":
+		sArgs := []string{"-j", "SET"}
+		if r.AddSet != "" {
+			sArgs = append(sArgs, "--add-set", r.AddSet, strings.Join(r.SetFlags, ","))
+		} else if r.DelSet != "" {
+			sArgs = append(sArgs, "--del-set", r.DelSet, strings.Join(r.SetFlags, ","))
+		}
+		if r.SetExist {
+			sArgs = append(sArgs, "--exist")
+		}
+		if r.SetTimeout != 0 {
+			sArgs = append(sArgs, "--timeout", fmt.Sprintf("%d", r.SetTimeout))
+		}
+		parts = append(parts, sArgs...)
+	case "CLASSIFY":
+		parts = append(parts, "-j", "CLASSIFY", "--set-class", r.SetClass)
+	case "DSCP":
+		if r.SetDSCP != "" {
+			parts = append(parts, "-j", "DSCP", "--set-dscp", r.SetDSCP)
+		} else {
+			parts = append(parts, "-j", "DSCP", "--set-dscp-class", strings.ToUpper(r.SetDSCPClass))
+		}
+	case "TOS":
+		tArgs := []string{"-j", "TOS"}
+		switch {
+		case r.SetTOS != "":
+			tArgs = append(tArgs, "--set-tos", r.SetTOS)
+		case r.AndTOS != "":
+			tArgs = append(tArgs, "--and-tos", r.AndTOS)
+		case r.OrTOS != "":
+			tArgs = append(tArgs, "--or-tos", r.OrTOS)
+		case r.XorTOS != "":
+			tArgs = append(tArgs, "--xor-tos", r.XorTOS)
+		}
+		parts = append(parts, tArgs...)
+	case "ECN":
+		parts = append(parts, "-j", "ECN")
+		if r.ECNTCPRemove {
+			parts = append(parts, "--ecn-tcp-remove")
+		}
+	case "TTL":
+		tArgs := []string{"-j", "TTL"}
+		switch {
+		case r.TTLSet != nil:
+			tArgs = append(tArgs, "--ttl-set", fmt.Sprintf("%d", *r.TTLSet))
+		case r.TTLDec != nil:
+			tArgs = append(tArgs, "--ttl-dec", fmt.Sprintf("%d", *r.TTLDec))
+		case r.TTLInc != nil:
+			tArgs = append(tArgs, "--ttl-inc", fmt.Sprintf("%d", *r.TTLInc))
+		}
+		parts = append(parts, tArgs...)
+	case "HL":
+		tArgs := []string{"-j", "HL"}
+		switch {
+		case r.HLSet != nil:
+			tArgs = append(tArgs, "--hl-set", fmt.Sprintf("%d", *r.HLSet))
+		case r.HLDec != nil:
+			tArgs = append(tArgs, "--hl-dec", fmt.Sprintf("%d", *r.HLDec))
+		case r.HLInc != nil:
+			tArgs = append(tArgs, "--hl-inc", fmt.Sprintf("%d", *r.HLInc))
+		}
+		parts = append(parts, tArgs...)
+	case "SECMARK":
+		parts = append(parts, "-j", "SECMARK", "--selctx", r.SelCtx)
+	case "CONNSECMARK":
+		cArgs := []string{"-j", "CONNSECMARK"}
+		switch {
+		case r.ConnSecMarkSave:
+			cArgs = append(cArgs, "--save")
+		case r.ConnSecMarkRestore:
+			cArgs = append(cArgs, "--restore")
+		}
+		parts = append(parts, cArgs...)
+	case "SYNPROXY":
+		sArgs := []string{"-j", "SYNPROXY"}
+		if r.SynproxyMSS != 0 {
+			sArgs = append(sArgs, "--mss", fmt.Sprintf("%d", r.SynproxyMSS))
+		}
+		if r.SynproxyWScale != 0 {
+			sArgs = append(sArgs, "--wscale", fmt.Sprintf("%d", r.SynproxyWScale))
+		}
+		if r.SynproxyTimestamp {
+			sArgs = append(sArgs, "--timestamp")
+		}
+		if r.SynproxySAckPerm {
+			sArgs = append(sArgs, "--sack-perm")
+		}
+		parts = append(parts, sArgs...)
+	case "TEE":
+		parts = append(parts, "-j", "TEE", "--gateway", r.Gateway)
+	case "TRACE":
+		parts = append(parts, "-j", "TRACE")
+	case "AUDIT":
+		parts = append(parts, "-j", "AUDIT", "--type", r.AuditType)
+	case "CHECKSUM":
+		parts = append(parts, "-j", "CHECKSUM")
+		if r.ChecksumFill {
+			parts = append(parts, "--checksum-fill")
+		}
+	case "NETMAP":
+		parts = append(parts, "-j", "NETMAP", "--to", r.NetmapTo)
+	case "CLUSTERIP":
+		cArgs := []string{"-j", "CLUSTERIP"}
+		if r.ClusterIPNew {
+			cArgs = append(cArgs, "--new")
+		}
+		if r.ClusterIPHashmode != "" {
+			cArgs = append(cArgs, "--hashmode", r.ClusterIPHashmode)
+		}
+		if r.ClusterIPClusterMAC != "" {
+			cArgs = append(cArgs, "--clustermac", r.ClusterIPClusterMAC)
+		}
+		if r.ClusterIPTotalNodes != 0 {
+			cArgs = append(cArgs, "--total-nodes", fmt.Sprintf("%d", r.ClusterIPTotalNodes))
+		}
+		if r.ClusterIPLocalNode != 0 {
+			cArgs = append(cArgs, "--local-node", fmt.Sprintf("%d", r.ClusterIPLocalNode))
+		}
+		if r.ClusterIPHashInit != 0 {
+			cArgs = append(cArgs, "--hash-init", fmt.Sprintf("%d", r.ClusterIPHashInit))
+		}
+		parts = append(parts, cArgs...)
+	case "IDLETIMER":
+		iArgs := []string{"-j", "IDLETIMER", "--timeout", fmt.Sprintf("%d", r.IdletimerTimeout), "--label", r.IdletimerLabel}
+		if r.IdletimerAlarm {
+			iArgs = append(iArgs, "--alarm")
+		}
+		parts = append(parts, iArgs...)
+	case "RATEEST":
+		rArgs := []string{"-j", "RATEEST", "--rateest-name", r.RateestName}
+		if r.RateestInterval != 0 {
+			rArgs = append(rArgs, "--rateest-interval", fmt.Sprintf("%d", r.RateestInterval))
+		}
+		if r.RateestEwmalog != 0 {
+			rArgs = append(rArgs, "--rateest-ewmalog", fmt.Sprintf("%d", r.RateestEwmalog))
+		}
+		parts = append(parts, rArgs...)
+	case "LED":
+		lArgs := []string{"-j", "LED", "--led-trigger-id", r.LEDTriggerID}
+		if r.LEDDelaySet {
+			lArgs = append(lArgs, "--led-delay", fmt.Sprintf("%d", r.LEDDelay))
+		}
+		if r.LEDAlwaysBlink {
+			lArgs = append(lArgs, "--led-always-blink")
+		}
+		parts = append(parts, lArgs...)
 	default:
 		parts = append(parts, "-j", r.Jump)
 	}
